@@ -87,6 +87,9 @@ int main (int argc, char * argv []) {
     printf("======= Current slot: %d\n", bootctl->getCurrentSlot());
     printf("======= isslotbootable: a = %d, b = %d\n", bootctl->isSlotBootable(0),
     bootctl->isSlotBootable(1));
+    printf("======= markBootSuccessful\n", bootctl->markBootSuccessful());
     printf("======= isSlotMarkedSuccessful: a = %d, b = %d\n", bootctl->isSlotMarkedSuccessful(0),
     bootctl->isSlotMarkedSuccessful(1));
+    // printf("\n\n\n trying to switch to slot b: %d\n",
+    //     bootctl->setActiveBootSlot(1));
 }

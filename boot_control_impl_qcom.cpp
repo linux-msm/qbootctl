@@ -125,15 +125,19 @@ static int get_partition_attribute(char *partname,
 		goto error;
 	}
 	attr = pentry + AB_FLAG_OFFSET;
-	printf("gpt_disk_get_pentry: 0x%x", *attr);
-	if (part_attr == ATTR_SLOT_ACTIVE)
+	printf("get_partition_attribute() partname = %s, attr = 0x%x\n", partname, *attr);
+	if (part_attr == ATTR_SLOT_ACTIVE) {
 		retval = !!(*attr & AB_PARTITION_ATTR_SLOT_ACTIVE);
-	else if (part_attr == ATTR_BOOT_SUCCESSFUL)
+		printf("ATTR_SLOT_ACTIVE, retval = %d\n", retval);
+	} else if (part_attr == ATTR_BOOT_SUCCESSFUL) {
 		retval = !!(*attr & AB_PARTITION_ATTR_BOOT_SUCCESSFUL);
-	else if (part_attr == ATTR_UNBOOTABLE)
+		printf("AB_PARTITION_ATTR_BOOT_SUCCESSFUL, retval = %d\n", retval);
+	} else if (part_attr == ATTR_UNBOOTABLE) {
 		retval = !!(*attr & AB_PARTITION_ATTR_UNBOOTABLE);
-	else
+		printf("AB_PARTITION_ATTR_UNBOOTABLE, retval = %d\n", retval);
+	} else {
 		retval = -1;
+	}
 	gpt_disk_free(disk);
 	return retval;
 error:
@@ -685,7 +689,6 @@ error:
 
 int is_slot_marked_successful(struct boot_control_module *module, unsigned slot)
 {
-	printf("%s\n", __func__);
 	int attr = 0;
 	char bootPartition[MAX_GPT_NAME_SIZE + 1] = {0};
 
@@ -697,6 +700,7 @@ int is_slot_marked_successful(struct boot_control_module *module, unsigned slot)
 			sizeof(bootPartition) - 1,
 			"boot%s", slot_suffix_arr[slot]);
 	attr = get_partition_attribute(bootPartition, ATTR_BOOT_SUCCESSFUL);
+	printf("%s(): slot = %d, attr = 0x%x\n", __func__, slot, attr);
 	if (attr >= 0)
 		return attr;
 error:

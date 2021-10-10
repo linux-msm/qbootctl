@@ -76,10 +76,10 @@
 //the boot critical luns lie between sda to sdz which is acceptable because
 //only user added external disks,etc would lie beyond that limit which do not
 //contain partitions that interest us here.
-#define PATH_TRUNCATE_LOC (sizeof("/dev/disk/sda") - 1)
+#define PATH_TRUNCATE_LOC (sizeof("/dev/sda") - 1)
 
 //From /dev/disk/sda get just sda
-#define LUN_NAME_START_LOC (sizeof("/dev/disk/") - 1)
+#define LUN_NAME_START_LOC (sizeof("/dev/") - 1)
 #define BOOT_LUN_A_ID 1
 #define BOOT_LUN_B_ID 2
 /******************************************************************************
@@ -125,6 +125,36 @@ struct update_data {
 /******************************************************************************
  * FUNCTIONS
  ******************************************************************************/
+void DumpHex(const void* data, size_t size) {
+	char ascii[17];
+	size_t i, j;
+	ascii[16] = '\0';
+	for (i = 0; i < size; ++i) {
+		printf("%02X ", ((unsigned char*)data)[i]);
+		if (((unsigned char*)data)[i] >= ' ' && ((unsigned char*)data)[i] <= '~') {
+			ascii[i % 16] = ((unsigned char*)data)[i];
+		} else {
+			ascii[i % 16] = '.';
+		}
+		if ((i+1) % 8 == 0 || i+1 == size) {
+			printf(" ");
+			if ((i+1) % 16 == 0) {
+				printf("|  %s \n", ascii);
+			} else if (i+1 == size) {
+				ascii[(i+1) % 16] = '\0';
+				if ((i+1) % 16 <= 8) {
+					printf(" ");
+				}
+				for (j = (i+1) % 16; j < 16; ++j) {
+					printf("   ");
+				}
+				printf("|  %s \n", ascii);
+			}
+		}
+	}
+}
+
+
 /**
  *  ==========================================================================
  *
@@ -205,7 +235,7 @@ static uint8_t *gpt_pentry_seek(const char *ptn_name,
         for (i = 0; i < sizeof(name8); i++)
             name8[i] = pentry_name[i * 2];
         if (!strncmp(ptn_name, name8, len))
-            if (name8[len] == 0; || !strcmp(&name8[len], BAK_PTN_NAME_EXT))
+            if (name8[len] == 0 || !strcmp(&name8[len], BAK_PTN_NAME_EXT))
                 return (uint8_t *) (pentry_name - PARTITION_NAME_OFFSET);
     }
 
@@ -540,7 +570,7 @@ int get_scsi_node_from_bootdevice(const char *bootdev_path,
                                  __func__);
                 goto error;
         }
-        if (readlink(bootdev_path, real_path, sizeof(real_path) - 1) < 0) {
+        if (realpath(bootdev_path, real_path) < 0) {
                         fprintf(stderr, "failed to resolve link for %s(%s)\n",
                                         bootdev_path,
                                         strerror(errno));
@@ -559,6 +589,8 @@ int get_scsi_node_from_bootdevice(const char *bootdev_path,
                            real_path);
             goto error;
         }
+        // snprintf(sg_node_path, PATH_MAX, "%s", real_path);
+        // return 0;
         //This will give us /dev/disk/sdb/device/scsi_generic
         //which contains a file sgY whose name gives us the path
         //to /dev/sgY which we return
@@ -614,6 +646,7 @@ int set_boot_lun(char *sg_dev, uint8_t boot_lun_id)
                                 __func__);
                 goto error;
         }
+        printf("%s(): sg_dev = %s\n", __func__, sg_dev);
         memset(data, 0, ioctl_data_size);
         data->opcode = UPIU_QUERY_OPCODE_WRITE_ATTR;
         data->idn = QUERY_ATTR_IDN_BOOT_LU_EN;
@@ -1017,9 +1050,9 @@ int prepare_boot_update(enum boot_update_stage stage)
                         if (stat(buf, &ufs_dir_stat)) {
                                 continue;
                         }
-                        if (readlink(buf, real_path, sizeof(real_path) - 1) < 0)
+                        if (realpath(buf, real_path) < 0)
                         {
-                                fprintf(stderr, "%s: readlink error. Skipping %s\n",
+                                fprintf(stderr, "%s: realpath error. Skipping %s\n",
                                                 __func__,
                                                 strerror(errno));
                         } else {
@@ -1076,7 +1109,6 @@ static int get_dev_path_from_partition_name(const char *partname,
                                 "%s/%s",
                                 BOOT_DEV_DIR,
                                 partname);
-                printf("PATH: #%s#\n", path);
                 // if (rc = stat(path, &st)) {
                 //         printf("stat failed: errno=%d\n", errno);
                 //         goto error;
@@ -1084,12 +1116,12 @@ static int get_dev_path_from_partition_name(const char *partname,
                 buf = realpath(path, buf);
                 if (!buf)
                 {
-                        printf("readlink failed\n");
+                        printf("realpath failed\n");
                         goto error;
                 } else {
                         buf[PATH_TRUNCATE_LOC] = '\0';
                 }
-                printf("readlink path: %s, rc = %d, errno=%d\n", buf, rc, errno);
+                printf("PATH: %s, realpath: %s\n", path, buf);
         } else {
                 snprintf(buf, buflen, "/dev/mmcblk0");
         }
@@ -1228,7 +1260,6 @@ static uint8_t* gpt_get_header(const char *partname, enum gpt_instance instance)
         }
 
         hdr = (uint8_t*)calloc(block_size, 1);
-        printf("%s(): devpath = %s, block_size = %u, hdr[0] = 0x%x, hdr[1] = 0x%x\n", __func__, devpath, block_size, hdr[0], hdr[1]);
         if (!hdr) {
                 fprintf(stderr, "%s: Failed to allocate memory for gpt header\n",
                                 __func__);
@@ -1248,6 +1279,7 @@ static uint8_t* gpt_get_header(const char *partname, enum gpt_instance instance)
                                 __func__);
                 goto error;
         }
+        //DumpHex(hdr, block_size);
         close(fd);
         return hdr;
 error:
@@ -1294,7 +1326,6 @@ static uint8_t* gpt_get_pentry_arr(uint8_t *hdr, int fd)
                                 __func__);
                 goto error;
         }
-        printf("hdr + PENTRIES_OFFSET = %lu, pentries_start: %lu\n", GET_8_BYTES(hdr + PENTRIES_OFFSET), pentries_start);
         rc = blk_rw(fd, 0,
                         pentries_start,
                         pentry_arr,

@@ -6,6 +6,8 @@ deps = [
 
 src = [
         'qbootctl.cpp',
+        'bootctrl_impl.cpp',
+        'bootctrl_test.cpp',
         'gpt-utils.cpp',
         'ufs-bsg.cpp',
 ]

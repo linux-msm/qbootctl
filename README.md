@@ -5,10 +5,22 @@ This HAL was pulled from AOSP source code and bastardised to build and run on a 
 ## Dependencies
 
 * zlib-dev
+* meson
+* cmake
+* linux-headers
+
+## Building
+
+qbootctl uses the meson build system
+
+```sh
+meson build
+meson compile -C build
+```
 
 ## Usage
 
-```
+```text
 qbootctl: qcom bootctrl HAL port for Linux
 -------------------------------------------
 qbootctl [-c|-m|-s|-u|-b|-n|-x] [SLOT]

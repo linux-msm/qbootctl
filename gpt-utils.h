@@ -37,78 +37,58 @@ extern "C" {
 #endif
 #include <unistd.h>
 #include <stdlib.h>
-/******************************************************************************
- * GPT HEADER DEFINES
- ******************************************************************************/
-#define GPT_SIGNATURE               "EFI PART"
-#define HEADER_SIZE_OFFSET          12
-#define HEADER_CRC_OFFSET           16
-#define PRIMARY_HEADER_OFFSET       24
-#define BACKUP_HEADER_OFFSET        32
-#define FIRST_USABLE_LBA_OFFSET     40
-#define LAST_USABLE_LBA_OFFSET      48
-#define PENTRIES_OFFSET             72
-#define PARTITION_COUNT_OFFSET      80
-#define PENTRY_SIZE_OFFSET          84
-#define PARTITION_CRC_OFFSET        88
 
-#define TYPE_GUID_OFFSET            0
-#define TYPE_GUID_SIZE              16
-#define PTN_ENTRY_SIZE              128
-#define UNIQUE_GUID_OFFSET          16
-#define FIRST_LBA_OFFSET            32
-#define LAST_LBA_OFFSET             40
-#define ATTRIBUTE_FLAG_OFFSET       48
-#define PARTITION_NAME_OFFSET       56
-#define MAX_GPT_NAME_SIZE           72
+#define GPT_SIGNATURE		"EFI PART"
+#define HEADER_SIZE_OFFSET	12
+#define HEADER_CRC_OFFSET	16
+#define PRIMARY_HEADER_OFFSET	24
+#define BACKUP_HEADER_OFFSET	32
+#define FIRST_USABLE_LBA_OFFSET 40
+#define LAST_USABLE_LBA_OFFSET	48
+#define PENTRIES_OFFSET		72
+#define PARTITION_COUNT_OFFSET	80
+#define PENTRY_SIZE_OFFSET	84
+#define PARTITION_CRC_OFFSET	88
 
-/******************************************************************************
- * AB RELATED DEFINES
- ******************************************************************************/
+#define TYPE_GUID_OFFSET	0
+#define TYPE_GUID_SIZE		16
+#define PTN_ENTRY_SIZE		128
+#define UNIQUE_GUID_OFFSET	16
+#define FIRST_LBA_OFFSET	32
+#define LAST_LBA_OFFSET		40
+#define ATTRIBUTE_FLAG_OFFSET	48
+#define PARTITION_NAME_OFFSET	56
+#define MAX_GPT_NAME_SIZE	72
+
 //Bit 48 onwords in the attribute field are the ones where we are allowed to
 //store our AB attributes.
-#define AB_FLAG_OFFSET (ATTRIBUTE_FLAG_OFFSET + 6)
-#define GPT_DISK_INIT_MAGIC 0xABCD
-#define AB_PARTITION_ATTR_SLOT_ACTIVE (0x1<<2)
-#define AB_PARTITION_ATTR_BOOT_SUCCESSFUL (0x1<<6)
-#define AB_PARTITION_ATTR_UNBOOTABLE (0x1<<7)
-#define AB_SLOT_ACTIVE_VAL              0xF
-#define AB_SLOT_INACTIVE_VAL            0x0
-#define AB_SLOT_ACTIVE                  1
-#define AB_SLOT_INACTIVE                0
-#define AB_SLOT_A_SUFFIX                "_a"
-#define AB_SLOT_B_SUFFIX                "_b"
-#define PTN_XBL                         "xbl"
-#define PTN_SWAP_LIST                   PTN_XBL, \
-            "abl", "aop", "apdp", "cmnlib", "cmnlib64", \
-            "devcfg", "dtbo", "hyp", "keymaster", "msadp", \
-            "qupfw", "storsec", "tz", "vbmeta", "vbmeta_system", "xbl_config"
+#define AB_FLAG_OFFSET			  (ATTRIBUTE_FLAG_OFFSET + 6)
+#define GPT_DISK_INIT_MAGIC		  0xABCD
+#define AB_PARTITION_ATTR_SLOT_ACTIVE	  (0x1 << 2)
+#define AB_PARTITION_ATTR_BOOT_SUCCESSFUL (0x1 << 6)
+#define AB_PARTITION_ATTR_UNBOOTABLE	  (0x1 << 7)
+#define AB_SLOT_ACTIVE_VAL		  0xF
+#define AB_SLOT_INACTIVE_VAL		  0x0
+#define AB_SLOT_ACTIVE			  1
+#define AB_SLOT_INACTIVE		  0
+#define AB_SLOT_A_SUFFIX		  "_a"
+#define AB_SLOT_B_SUFFIX		  "_b"
+#define PTN_XBL				  "xbl"
+#define PTN_SWAP_LIST                                                          \
+	PTN_XBL, "abl", "aop", "apdp", "cmnlib", "cmnlib64", "devcfg", "dtbo", \
+		"hyp", "keymaster", "msadp", "qupfw", "storsec", "tz",         \
+		"vbmeta", "vbmeta_system", "xbl_config"
 
-#define AB_PTN_LIST PTN_SWAP_LIST, "boot", "system", "vendor", "modem", "system_ext", "product"
-#define BOOT_DEV_DIR    "/dev/disk/by-partlabel"
+#define AB_PTN_LIST                                                            \
+	PTN_SWAP_LIST, "boot", "system", "vendor", "modem", "system_ext",      \
+		"product"
+#define BOOT_DEV_DIR  "/dev/disk/by-partlabel"
 
-/******************************************************************************
- * HELPER MACROS
- ******************************************************************************/
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
-/******************************************************************************
- * TYPES
- ******************************************************************************/
-enum boot_update_stage {
-	UPDATE_MAIN = 1,
-	UPDATE_BACKUP,
-	UPDATE_FINALIZE
-};
 
-enum gpt_instance {
-	PRIMARY_GPT = 0,
-	SECONDARY_GPT
-};
+enum gpt_instance { PRIMARY_GPT = 0, SECONDARY_GPT };
 
-enum boot_chain {
-	NORMAL_BOOT = 0,
-	BACKUP_BOOT
-};
+enum boot_chain { NORMAL_BOOT = 0, BACKUP_BOOT };
 
 struct gpt_disk {
 	//GPT primary header
@@ -138,12 +118,8 @@ struct gpt_disk {
 	uint32_t is_initialized;
 };
 
-/******************************************************************************
- * FUNCTION PROTOTYPES
- ******************************************************************************/
-int prepare_boot_update(enum boot_update_stage stage);
 //GPT disk methods
-struct gpt_disk* gpt_disk_alloc();
+struct gpt_disk *gpt_disk_alloc();
 //Free previously allocated gpt_disk struct
 void gpt_disk_free(struct gpt_disk *disk);
 //Get the details of the disk holding the partition whose name
@@ -151,18 +127,14 @@ void gpt_disk_free(struct gpt_disk *disk);
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);
 
 //Get pointer to partition entry from a allocated gpt_disk structure
-uint8_t* gpt_disk_get_pentry(struct gpt_disk *disk,
-		const char *partname,
-		enum gpt_instance instance);
+uint8_t *gpt_disk_get_pentry(struct gpt_disk *disk, const char *partname,
+			     enum gpt_instance instance);
 
 //Update the crc fields of the modified disk structure
 int gpt_disk_update_crc(struct gpt_disk *disk);
 
 //Write the contents of struct gpt_disk back to the actual disk
 int gpt_disk_commit(struct gpt_disk *disk);
-
-//Return if the current device is UFS based or not
-int gpt_utils_is_ufs_device();
 
 //Swtich betwieen using either the primary or the backup
 //boot LUN for boot. This is required since UFS boot partitions
@@ -188,8 +160,9 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain);
 //sits on. The key in the map is the path to the block device where the
 //partition lies and the value is a vector of strings indicating which of
 //the passed in partition names sits on that device.
-int gpt_utils_get_partition_map(std::vector<std::string>& partition_list,
-                std::map<std::string,std::vector<std::string>>& partition_map);
+int gpt_utils_get_partition_map(
+	std::vector<std::string> &partition_list,
+	std::map<std::string, std::vector<std::string> > &partition_map);
 #ifdef __cplusplus
 }
 #endif

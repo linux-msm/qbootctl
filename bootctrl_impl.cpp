@@ -376,7 +376,7 @@ int mark_boot_successful(unsigned slot)
 	if (successful) {
 		fprintf(stderr, "SLOT %s: already marked successful\n",
 			slot_suffix_arr[slot]);
-		return -1;
+		return 0;
 	}
 
 	if (update_slot_attribute(slot_suffix_arr[slot],

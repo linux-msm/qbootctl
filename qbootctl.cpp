@@ -148,6 +148,11 @@ int main(int argc, char **argv)
 		impl = &bootctl_test;
 	}
 
+	if(geteuid() != 0) {
+		fprintf(stderr, "This program must be run as root!\n");
+		return 1;
+	}
+
 	switch (argc) {
 	case 1:
 		dump_info();

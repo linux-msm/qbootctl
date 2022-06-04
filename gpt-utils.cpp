@@ -38,8 +38,6 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
-#include <scsi/ufs/ioctl.h>
-#include <scsi/ufs/ufs.h>
 #include <unistd.h>
 #include <linux/fs.h>
 #include <limits.h>
@@ -53,6 +51,7 @@
 #include <endian.h>
 #include <zlib.h>
 
+#include "utils.h"
 #include "gpt-utils.h"
 
 
@@ -373,7 +372,7 @@ static int gpt2_set_boot_chain(int fd, enum boot_chain boot)
     if (r)
         goto EXIT;
 
-    crc = 0; // crc32(0, pentries, pentries_array_size);
+    crc = crc32(0, pentries, pentries_array_size);
     if (GET_4_BYTES(gpt_header + PARTITION_CRC_OFFSET) != crc) {
         fprintf(stderr, "Primary GPT partition entries array CRC invalid\n");
         r = -1;
@@ -396,12 +395,12 @@ static int gpt2_set_boot_chain(int fd, enum boot_chain boot)
             goto EXIT;
     }
 
-    crc = 0; // crc32(0, pentries, pentries_array_size);
+    crc = crc32(0, pentries, pentries_array_size);
     PUT_4_BYTES(gpt_header + PARTITION_CRC_OFFSET, crc);
 
     /* header CRC is calculated with this field cleared */
     PUT_4_BYTES(gpt_header + HEADER_CRC_OFFSET, 0);
-    crc = 0; // crc32(0, gpt_header, gpt_header_size);
+    crc = crc32(0, gpt_header, gpt_header_size);
     PUT_4_BYTES(gpt_header + HEADER_CRC_OFFSET, crc);
 
     /* Write the modified GPT header back to block dev */
@@ -542,7 +541,7 @@ static int gpt_set_state(int fd, enum gpt_instance gpt, enum gpt_state state)
 
     /* header CRC is calculated with this field cleared */
     PUT_4_BYTES(gpt_header + HEADER_CRC_OFFSET, 0);
-    crc = 0; // crc32(0, gpt_header, gpt_header_size);
+    crc = crc32(0, gpt_header, gpt_header_size);
     PUT_4_BYTES(gpt_header + HEADER_CRC_OFFSET, crc);
 
     if (blk_rw(fd, 1, gpt_header_offset, gpt_header, blk_size)) {
@@ -556,127 +555,9 @@ error:
     return -1;
 }
 
-int get_scsi_node_from_bootdevice(const char *bootdev_path,
-                char *sg_node_path,
-                size_t buf_size)
-{
-        char sg_dir_path[PATH_MAX] = {0};
-        char real_path[PATH_MAX] = {0};
-        DIR *scsi_dir = NULL;
-        struct dirent *de;
-        int node_found = 0;
-        if (!bootdev_path || !sg_node_path) {
-                fprintf(stderr, "%s : invalid argument\n",
-                                 __func__);
-                goto error;
-        }
-        if (realpath(bootdev_path, real_path) < 0) {
-                        fprintf(stderr, "failed to resolve link for %s(%s)\n",
-                                        bootdev_path,
-                                        strerror(errno));
-                        goto error;
-        }
-        if(strlen(real_path) < PATH_TRUNCATE_LOC + 1){
-            fprintf(stderr, "Unrecognized path :%s:\n",
-                           real_path);
-            goto error;
-        }
-        //For the safe side in case there are additional partitions on
-        //the XBL lun we truncate the name.
-        real_path[PATH_TRUNCATE_LOC] = '\0';
-        if(strlen(real_path) < LUN_NAME_START_LOC + 1){
-            fprintf(stderr, "Unrecognized truncated path :%s:\n",
-                           real_path);
-            goto error;
-        }
-        // snprintf(sg_node_path, PATH_MAX, "%s", real_path);
-        // return 0;
-        //This will give us /dev/disk/sdb/device/scsi_generic
-        //which contains a file sgY whose name gives us the path
-        //to /dev/sgY which we return
-        snprintf(sg_dir_path, sizeof(sg_dir_path) - 1,
-                        "/sys/block/%s/device/scsi_generic",
-                        &real_path[LUN_NAME_START_LOC]);
-        scsi_dir = opendir(sg_dir_path);
-        if (!scsi_dir) {
-                fprintf(stderr, "%s : Failed to open %s(%s)\n",
-                                __func__,
-                                sg_dir_path,
-                                strerror(errno));
-                goto error;
-        }
-        while((de = readdir(scsi_dir))) {
-                if (de->d_name[0] == '.')
-                        continue;
-                else if (!strncmp(de->d_name, "sg\n", 2)) {
-                          snprintf(sg_node_path,
-                                        buf_size -1,
-                                        "/dev/%s",
-                                        de->d_name);
-                          fprintf(stderr, "%s:scsi generic node is :%s:\n",
-                                          __func__,
-                                          sg_node_path);
-                          node_found = 1;
-                          break;
-                }
-        }
-        if(!node_found) {
-                fprintf(stderr,"%s: Unable to locate scsi generic node\n",
-                               __func__);
-                goto error;
-        }
-        closedir(scsi_dir);
-        return 0;
-error:
-        if (scsi_dir)
-                closedir(scsi_dir);
-        return -1;
-}
 
-int set_boot_lun(char *sg_dev, uint8_t boot_lun_id)
-{
-        int fd = -1;
-        int rc;
-        struct ufs_ioctl_query_data *data = NULL;
-        size_t ioctl_data_size = sizeof(struct ufs_ioctl_query_data) + UFS_ATTR_DATA_SIZE;
-
-        data = (struct ufs_ioctl_query_data*)malloc(ioctl_data_size);
-        if (!data) {
-                fprintf(stderr, "%s: Failed to alloc query data struct\n",
-                                __func__);
-                goto error;
-        }
-        printf("%s(): sg_dev = %s\n", __func__, sg_dev);
-        memset(data, 0, ioctl_data_size);
-        data->opcode = UPIU_QUERY_OPCODE_WRITE_ATTR;
-        data->idn = QUERY_ATTR_IDN_BOOT_LU_EN;
-        data->buf_size = UFS_ATTR_DATA_SIZE;
-        data->buffer[0] = boot_lun_id;
-        fd = open(sg_dev, O_RDWR);
-        if (fd < 0) {
-                fprintf(stderr, "%s: Failed to open %s(%s)\n",
-                                __func__,
-                                sg_dev,
-                                strerror(errno));
-                goto error;
-        }
-        rc = ioctl(fd, UFS_IOCTL_QUERY, data);
-        if (rc) {
-                fprintf(stderr, "%s: UFS query ioctl failed(%s)\n",
-                                __func__,
-                                strerror(errno));
-                goto error;
-        }
-        close(fd);
-        free(data);
-        return 0;
-error:
-        if (fd >= 0)
-                close(fd);
-        if (data)
-                free(data);
-        return -1;
-}
+// Defined in ufs-bsg.cpp
+int32_t set_boot_lun(uint8_t lun_id);
 
 //Swtich betwieen using either the primary or the backup
 //boot LUN for boot. This is required since UFS boot partitions
@@ -698,10 +579,11 @@ error:
 int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 {
         struct stat st;
-        ///sys/block/sdX/device/scsi_generic/
-        char sg_dev_node[PATH_MAX] = {0};
         uint8_t boot_lun_id = 0;
         const char *boot_dev = NULL;
+
+        (void)st;
+        (void)boot_dev;
 
         if (chain == BACKUP_BOOT) {
                 boot_lun_id = BOOT_LUN_B_ID;
@@ -740,17 +622,10 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
                                 strerror(errno));
                 goto error;
         }
-        fprintf(stderr, "%s: setting %s lun as boot lun\n",
-                        __func__,
+        LOGD("%s: setting %s lun as boot lun\n", __func__,
                         boot_dev);
-        if (get_scsi_node_from_bootdevice(boot_dev,
-                                sg_dev_node,
-                                sizeof(sg_dev_node))) {
-                fprintf(stderr, "%s: Failed to get scsi node path for xblbak\n",
-                                __func__);
-                goto error;
-        }
-        if (set_boot_lun(sg_dev_node, boot_lun_id)) {
+
+        if (set_boot_lun(boot_lun_id)) {
                 fprintf(stderr, "%s: Failed to set xblbak as boot partition\n",
                                 __func__);
                 goto error;
@@ -1050,7 +925,7 @@ int prepare_boot_update(enum boot_update_stage stage)
                         if (stat(buf, &ufs_dir_stat)) {
                                 continue;
                         }
-                        if (realpath(buf, real_path) < 0)
+                        if (!realpath(buf, real_path))
                         {
                                 fprintf(stderr, "%s: realpath error. Skipping %s\n",
                                                 __func__,
@@ -1097,11 +972,13 @@ static int get_dev_path_from_partition_name(const char *partname,
                 size_t buflen)
 {
         struct stat st;
-        int rc;
         char path[PATH_MAX] = {0};
+
+        (void)st;
+
         if (!partname || !buf || buflen < ((PATH_TRUNCATE_LOC) + 1)) {
                 fprintf(stderr, "%s: Invalid argument\n", __func__);
-                goto error;
+                return -1;
         }
         if (gpt_utils_is_ufs_device()) {
                 //Need to find the lun that holds partition partname
@@ -1110,25 +987,20 @@ static int get_dev_path_from_partition_name(const char *partname,
                                 BOOT_DEV_DIR,
                                 partname);
                 // if (rc = stat(path, &st)) {
-                //         printf("stat failed: errno=%d\n", errno);
+                //         LOGD("stat failed: errno=%d\n", errno);
                 //         goto error;
                 // }
                 buf = realpath(path, buf);
                 if (!buf)
                 {
-                        printf("realpath failed\n");
-                        goto error;
+                        return -1;
                 } else {
                         buf[PATH_TRUNCATE_LOC] = '\0';
                 }
-                printf("PATH: %s, realpath: %s\n", path, buf);
         } else {
                 snprintf(buf, buflen, "/dev/mmcblk0");
         }
         return 0;
-
-error:
-        return -1;
 }
 
 int gpt_utils_get_partition_map(vector<string>& ptn_list,
@@ -1199,7 +1071,7 @@ static int gpt_set_header(uint8_t *gpt_header, int fd,
                 goto error;
         }
         block_size = gpt_get_block_size(fd);
-        printf("%s: Block size is : %d\n", __func__, block_size);
+        LOGD("%s: Block size is : %d\n", __func__, block_size);
         if (block_size == 0) {
                 fprintf(stderr, "%s: Failed to get block size\n", __func__);
                 goto error;
@@ -1212,7 +1084,7 @@ static int gpt_set_header(uint8_t *gpt_header, int fd,
                 fprintf(stderr, "%s: Failed to get gpt header offset\n",__func__);
                 goto error;
         }
-        printf("%s: Writing back header to offset %ld\n", __func__,
+        LOGD("%s: Writing back header to offset %ld\n", __func__,
                 gpt_header_offset);
         if (blk_rw(fd, 1, gpt_header_offset, gpt_header, block_size)) {
                 fprintf(stderr, "%s: Failed to write back GPT header\n", __func__);
@@ -1359,16 +1231,16 @@ static int gpt_set_pentry_arr(uint8_t *hdr, int fd, uint8_t* arr)
                                 __func__);
                 goto error;
         }
-        printf("%s : Block size is %d\n", __func__, block_size);
+        LOGD("%s : Block size is %d\n", __func__, block_size);
         pentries_start = GET_8_BYTES(hdr + PENTRIES_OFFSET) * block_size;
         pentry_size = GET_4_BYTES(hdr + PENTRY_SIZE_OFFSET);
         pentries_arr_size =
                 GET_4_BYTES(hdr + PARTITION_COUNT_OFFSET) * pentry_size;
-        printf("%s: Writing partition entry array of size %d to offset %" PRIu64 "\n",
+        LOGD("%s: Writing partition entry array of size %d to offset %" PRIu64 "\n",
                         __func__,
                         pentries_arr_size,
                         pentries_start);
-        printf("pentries_start: %lu\n", pentries_start);
+        LOGD("pentries_start: %lu\n", pentries_start);
         rc = blk_rw(fd, 1,
                         pentries_start,
                         arr,
@@ -1436,13 +1308,13 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
         }
         gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
         // FIXME: pointer offsets crc bleh
-        disk->hdr_crc = 0; //crc32(0, disk->hdr, gpt_header_size);
+        disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
         disk->hdr_bak = gpt_get_header(dev, PRIMARY_GPT);
         if (!disk->hdr_bak) {
                 fprintf(stderr, "%s: Failed to get backup header\n", __func__);
                 goto error;
         }
-        disk->hdr_bak_crc = 0; //crc32(0, disk->hdr_bak, gpt_header_size);
+        disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
 
         //Descriptor for the block device. We will use this for further
         //modifications to the partition table
@@ -1522,13 +1394,13 @@ int gpt_disk_update_crc(struct gpt_disk *disk)
                 goto error;
         }
         //Recalculate the CRC of the primary partiton array
-        disk->pentry_arr_crc = 0; // crc32(0,
-                        //disk->pentry_arr,
-                        //disk->pentry_arr_size);
+        disk->pentry_arr_crc = crc32(0,
+                        disk->pentry_arr,
+                        disk->pentry_arr_size);
         //Recalculate the CRC of the backup partition array
-        disk->pentry_arr_bak_crc = 0; // crc32(0,
-                        //disk->pentry_arr_bak,
-                        //disk->pentry_arr_size);
+        disk->pentry_arr_bak_crc = crc32(0,
+                        disk->pentry_arr_bak,
+                        disk->pentry_arr_size);
         //Update the partition CRC value in the primary GPT header
         PUT_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET, disk->pentry_arr_crc);
         //Update the partition CRC value in the backup GPT header
@@ -1539,8 +1411,8 @@ int gpt_disk_update_crc(struct gpt_disk *disk)
         //Header CRC is calculated with its own CRC field set to 0
         PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, 0);
         PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, 0);
-        disk->hdr_crc = 0; // crc32(0, disk->hdr, gpt_header_size);
-        disk->hdr_bak_crc = 0; // crc32(0, disk->hdr_bak, gpt_header_size);
+        disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
+        disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
         PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, disk->hdr_crc);
         PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, disk->hdr_bak_crc);
         return 0;
@@ -1564,14 +1436,14 @@ int gpt_disk_commit(struct gpt_disk *disk)
                                 strerror(errno));
                 goto error;
         }
-        printf("%s: Writing back primary GPT header\n", __func__);
+        LOGD("%s: Writing back primary GPT header\n", __func__);
         //Write the primary header
         if(gpt_set_header(disk->hdr, fd, PRIMARY_GPT) != 0) {
                 fprintf(stderr, "%s: Failed to update primary GPT header\n",
                                 __func__);
                 goto error;
         }
-        printf("%s: Writing back primary partition array\n", __func__);
+        LOGD("%s: Writing back primary partition array\n", __func__);
         //Write back the primary partition array
         if (gpt_set_pentry_arr(disk->hdr, fd, disk->pentry_arr)) {
                 fprintf(stderr, "%s: Failed to write primary GPT partition arr\n",

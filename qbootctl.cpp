@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2021-2022 Caleb Connolly <caleb@connolly.tech>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -41,7 +42,7 @@
 #include <fcntl.h>
 #include <limits.h>
 
-#include "boot_control.h"
+#include "utils.h"
 #include "gpt-utils.h"
 
 #define BOOTDEV_DIR "/dev/disk/by-partlabel"
@@ -72,27 +73,41 @@ enum part_attr_type {
 	ATTR_SLOT_ACTIVE = 0,
 	ATTR_BOOT_SUCCESSFUL,
 	ATTR_UNBOOTABLE,
+	ATTR_BOOTABLE,
 };
 
-void get_kernel_cmdline_arg(const char * arg, const char* buf, const char* def)
+void get_kernel_cmdline_arg(const char * arg, char* buf, const char* def)
 {
-	// int fd = open("/proc/cmdline\n", O_RDONLY);
-	// char buf[MAX_CMDLINE_SIZE];
-	// int rc = read(fd, &buf, MAX_CMDLINE_SIZE);
-	// close(fd);
-	// std::string cmdline(buf);
-	// std::regex rgx(std::string(arg).append("=.+"))
-	printf("%s\n", __func__);
-	buf = def;
+	int fd;
+	char pcmd[MAX_CMDLINE_SIZE];
+	char *val, *found, *ptr = buf;
+	fd = open("/proc/cmdline", O_RDONLY);
+	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE);
+	if (rc < 0) {
+		fprintf(stderr, "Couldn't open /proc/cmdline: %d (%s)\n", rc, strerror(errno));
+		goto error;
+	}
+	close(fd);
+	found = strstr(pcmd, arg);
+	if (!found || !(val = strstr(found, "="))) {
+		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
+		goto error;
+	}
+
+	val++;
+	// no this doesn't handle quotes lol
+	while (*val != ' ') {
+		*ptr++ = *val++;
+	}
+
+	return;
+
+error:
+	strcpy(buf, def);
 }
 
-void boot_control_init(struct boot_control_module *module)
+void boot_control_init()
 {
-	printf("%s\n", __func__);
-	if (!module) {
-		fprintf(stderr, "Invalid argument passed to %s\n", __func__);
-		return;
-	}
 	return;
 }
 
@@ -100,7 +115,6 @@ void boot_control_init(struct boot_control_module *module)
 static int get_partition_attribute(char *partname,
 		enum part_attr_type part_attr)
 {
-	printf("%s\n", __func__);
 	struct gpt_disk *disk = NULL;
 	uint8_t *pentry = NULL;
 	int retval = -1;
@@ -112,7 +126,6 @@ static int get_partition_attribute(char *partname,
 		fprintf(stderr, "%s: Failed to alloc disk struct\n", __func__);
 		goto error;
 	}
-	printf("gpt_disk_get_disk_info\n");
 	if (gpt_disk_get_disk_info(partname, disk)) {
 		fprintf(stderr, "%s: Failed to get disk info\n", __func__);
 		goto error;
@@ -125,16 +138,16 @@ static int get_partition_attribute(char *partname,
 		goto error;
 	}
 	attr = pentry + AB_FLAG_OFFSET;
-	printf("get_partition_attribute() partname = %s, attr = 0x%x\n", partname, *attr);
+	LOGD("get_partition_attribute() partname = %s, attr = 0x%x\n", partname, *attr);
 	if (part_attr == ATTR_SLOT_ACTIVE) {
 		retval = !!(*attr & AB_PARTITION_ATTR_SLOT_ACTIVE);
-		printf("ATTR_SLOT_ACTIVE, retval = %d\n", retval);
+		LOGD("ATTR_SLOT_ACTIVE, retval = %d\n", retval);
 	} else if (part_attr == ATTR_BOOT_SUCCESSFUL) {
 		retval = !!(*attr & AB_PARTITION_ATTR_BOOT_SUCCESSFUL);
-		printf("AB_PARTITION_ATTR_BOOT_SUCCESSFUL, retval = %d\n", retval);
+		LOGD("AB_PARTITION_ATTR_BOOT_SUCCESSFUL, retval = %d\n", retval);
 	} else if (part_attr == ATTR_UNBOOTABLE) {
 		retval = !!(*attr & AB_PARTITION_ATTR_UNBOOTABLE);
-		printf("AB_PARTITION_ATTR_UNBOOTABLE, retval = %d\n", retval);
+		LOGD("AB_PARTITION_ATTR_UNBOOTABLE, retval = %d\n", retval);
 	} else {
 		retval = -1;
 	}
@@ -161,9 +174,8 @@ static int update_slot_attribute(const char *slot,
 	uint8_t *attr = NULL;
 	uint8_t *attr_bak = NULL;
 	char partName[MAX_GPT_NAME_SIZE + 1] = {0};
-	const char ptn_list[][MAX_GPT_NAME_SIZE] = { AB_PTN_LIST };
+	const char ptn_list[][MAX_GPT_NAME_SIZE - 1] = { AB_PTN_LIST };
 	int slot_name_valid = 0;
-	printf("%s\n", __func__);
 	if (!slot) {
 		fprintf(stderr, "%s: Invalid argument\n", __func__);
 		goto error;
@@ -182,30 +194,30 @@ static int update_slot_attribute(const char *slot,
 		memset(buf, '\0', sizeof(buf));
 		//Check if A/B versions of this ptn exist
 		snprintf(buf, sizeof(buf) - 1,
-                                        "%s/%s%s\n",
+                                        "%s/%s%s",
                                         BOOT_DEV_DIR,
                                         ptn_list[i],
 					AB_SLOT_A_SUFFIX
 					);
-		if (stat(buf, &st)) {
+		if (stat(buf, &st) < 0) {
 			//partition does not have _a version
 			continue;
 		}
 		memset(buf, '\0', sizeof(buf));
 		snprintf(buf, sizeof(buf) - 1,
-                                        "%s/%s%s\n",
+                                        "%s/%s%s",
                                         BOOT_DEV_DIR,
                                         ptn_list[i],
 					AB_SLOT_B_SUFFIX
 					);
-		if (stat(buf, &st)) {
-			//partition does not have _a version
+		if (stat(buf, &st) < 0) {
+			//partition does not have _b version
 			continue;
 		}
 		memset(partName, '\0', sizeof(partName));
 		snprintf(partName,
 				sizeof(partName) - 1,
-				"%s%s\n",
+				"%s%s",
 				ptn_list[i],
 				slot);
 		disk = gpt_disk_alloc();
@@ -230,18 +242,27 @@ static int update_slot_attribute(const char *slot,
 			goto error;
 		}
 		attr = pentry + AB_FLAG_OFFSET;
+		LOGD("%s: got pentry for part '%s': 0x%lx (at flags: 0x%x)\n", __func__, partName, *(uint64_t*)pentry, *attr);
 		attr_bak = pentry_bak + AB_FLAG_OFFSET;
-		if (ab_attr == ATTR_BOOT_SUCCESSFUL) {
+		switch(ab_attr) {
+		case ATTR_BOOT_SUCCESSFUL:
 			*attr = (*attr) | AB_PARTITION_ATTR_BOOT_SUCCESSFUL;
 			*attr_bak = (*attr_bak) |
 				AB_PARTITION_ATTR_BOOT_SUCCESSFUL;
-		} else if (ab_attr == ATTR_UNBOOTABLE) {
+			break;
+		case ATTR_UNBOOTABLE:
 			*attr = (*attr) | AB_PARTITION_ATTR_UNBOOTABLE;
 			*attr_bak = (*attr_bak) | AB_PARTITION_ATTR_UNBOOTABLE;
-		} else if (ab_attr == ATTR_SLOT_ACTIVE) {
+			break;
+		case ATTR_BOOTABLE:
+			*attr = (*attr) ^ AB_PARTITION_ATTR_UNBOOTABLE;
+			*attr_bak = (*attr_bak) ^ AB_PARTITION_ATTR_UNBOOTABLE;
+			break;
+		case ATTR_SLOT_ACTIVE:
 			*attr = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
 			*attr_bak = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
-		} else {
+			break;
+		default:
 			fprintf(stderr, "%s: Unrecognized attr\n", __func__);
 			goto error;
 		}
@@ -267,15 +288,12 @@ error:
 	return -1;
 }
 
-unsigned get_number_slots(struct boot_control_module *module)
+unsigned get_number_slots()
 {
 	struct dirent *de = NULL;
 	DIR *dir_bootdev = NULL;
 	unsigned slot_count = 0;
-	if (!module) {
-		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		goto error;
-	}
+
 	dir_bootdev = opendir(BOOTDEV_DIR);
 	if (!dir_bootdev) {
 		fprintf(stderr, "%s: Failed to open bootdev dir (%s)\n",
@@ -301,16 +319,12 @@ error:
 	return 0;
 }
 
-static unsigned int get_current_slot(struct boot_control_module *module)
+static unsigned int get_current_slot()
 {
 	uint32_t num_slots = 0;
 	char bootSlotProp[MAX_CMDLINE_SIZE] = {'\0'};
 	unsigned i = 0;
-	if (!module) {
-		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		goto error;
-	}
-	num_slots = get_number_slots(module);
+	num_slots = get_number_slots();
 	if (num_slots <= 1) {
 		//Slot 0 is the only slot around.
 		return 0;
@@ -327,7 +341,7 @@ static unsigned int get_current_slot(struct boot_control_module *module)
 		if (!strncmp(bootSlotProp,
 					slot_suffix_arr[i],
 					strlen(slot_suffix_arr[i]))) {
-			printf("%s current_slot = %d\n", __func__, i);
+			//printf("%s current_slot = %d\n", __func__, i);
 			return i;
 		}
 	}
@@ -338,13 +352,9 @@ error:
 	return 0;
 }
 
-static int boot_control_check_slot_sanity(struct boot_control_module *module,
-		unsigned slot)
+static int boot_control_check_slot_sanity(unsigned slot)
 {
-	printf("%s\n", __func__);
-	if (!module)
-		return -1;
-	uint32_t num_slots = get_number_slots(module);
+	uint32_t num_slots = get_number_slots();
 	if ((num_slots < 1) || (slot > num_slots - 1)) {
 		fprintf(stderr, "Invalid slot number");
 		return -1;
@@ -353,29 +363,60 @@ static int boot_control_check_slot_sanity(struct boot_control_module *module,
 
 }
 
-int mark_boot_successful(struct boot_control_module *module)
+int get_boot_attr(unsigned slot, enum part_attr_type attr)
 {
-	printf("%s\n", __func__);
-	unsigned cur_slot = 0;
-	if (!module) {
-		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		goto error;
+	char bootPartition[MAX_GPT_NAME_SIZE + 1] = {0};
+
+	if (boot_control_check_slot_sanity(slot) != 0) {
+		fprintf(stderr, "%s: Argument check failed\n", __func__);
+		return -1;
 	}
-	cur_slot = get_current_slot(module);
-	if (update_slot_attribute(slot_suffix_arr[cur_slot],
+	snprintf(bootPartition,
+			sizeof(bootPartition) - 1, "boot%s",
+			slot_suffix_arr[slot]);
+	
+	return get_partition_attribute(bootPartition, attr);
+}
+
+int is_slot_bootable(unsigned slot)
+{
+	int attr = 0;
+	attr = get_boot_attr(slot, ATTR_UNBOOTABLE);
+	if (attr >= 0)
+		return !attr;
+
+	return -1;
+}
+
+int mark_boot_successful(unsigned slot)
+{
+	int successful = get_boot_attr(slot, ATTR_BOOT_SUCCESSFUL);
+
+	if (!is_slot_bootable(slot)) {
+		printf("SLOT %s: was marked unbootable, fixing this"
+		       " (I hope you know what you're doing...)\n", slot_suffix_arr[slot]);
+		update_slot_attribute(slot_suffix_arr[slot],
+				ATTR_BOOTABLE);
+	}
+
+	if (successful) {
+		fprintf(stderr, "SLOT %s: already marked successful\n", slot_suffix_arr[slot]);
+		return -1;
+	}
+
+	if (update_slot_attribute(slot_suffix_arr[slot],
 				ATTR_BOOT_SUCCESSFUL)) {
 		goto error;
 	}
 	return 0;
 error:
-	fprintf(stderr, "%s: Failed to mark boot successful\n", __func__);
+	fprintf(stderr, "SLOT %s: Failed to mark boot successful\n", slot_suffix_arr[slot]);
 	return -1;
 }
 
-const char *get_suffix(struct boot_control_module *module, unsigned slot)
+const char *get_suffix(unsigned slot)
 {
-	printf("%s\n", __func__);
-	if (boot_control_check_slot_sanity(module, slot) != 0)
+	if (boot_control_check_slot_sanity(slot) != 0)
 		return NULL;
 	else
 		return slot_suffix_arr[slot];
@@ -386,7 +427,6 @@ const char *get_suffix(struct boot_control_module *module, unsigned slot)
 //partition.
 static struct gpt_disk* boot_ctl_get_disk_info(char *partition)
 {
-	printf("%s\n", __func__);
 	struct gpt_disk *disk = NULL;
 	if (!partition)
 		return NULL;
@@ -413,13 +453,13 @@ error:
 static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 		unsigned slot)
 {
-	printf("%s\n", __func__);
 	char buf[PATH_MAX] = {0};
 	struct gpt_disk *disk = NULL;
 	char slotA[MAX_GPT_NAME_SIZE + 1] = {0};
 	char slotB[MAX_GPT_NAME_SIZE + 1] = {0};
 	char active_guid[TYPE_GUID_SIZE + 1] = {0};
 	char inactive_guid[TYPE_GUID_SIZE + 1] = {0};
+	int rc;
 	//Pointer to the partition entry of current 'A' partition
 	uint8_t *pentryA = NULL;
 	uint8_t *pentryA_bak = NULL;
@@ -429,34 +469,45 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 	struct stat st;
 	vector<string>::iterator partition_iterator;
 
+	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
+
 	for (partition_iterator = part_list.begin();
 			partition_iterator != part_list.end();
 			partition_iterator++) {
 		//Chop off the slot suffix from the partition name to
 		//make the string easier to work with.
 		string prefix = *partition_iterator;
+		LOGD("Part: %s\n", prefix.c_str());
 		if (prefix.size() < (strlen(AB_SLOT_A_SUFFIX) + 1)) {
 			fprintf(stderr, "Invalid partition name: %s\n", prefix.c_str());
 			goto error;
 		}
 		prefix.resize(prefix.size() - strlen(AB_SLOT_A_SUFFIX));
 		//Check if A/B versions of this ptn exist
-		snprintf(buf, sizeof(buf) - 1, "%s/%s%s\n", BOOT_DEV_DIR,
+		snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR,
 				prefix.c_str(),
 				AB_SLOT_A_SUFFIX);
-		if (stat(buf, &st))
+		LOGD("\t_a Path: '%s'\n", buf);
+		rc = stat(buf, &st);
+		if (rc < 0) {
+			fprintf(stderr, "Failed to stat() path: %d: %s\n", rc, strerror(errno));
 			continue;
+		}
 		memset(buf, '\0', sizeof(buf));
-		snprintf(buf, sizeof(buf) - 1, "%s/%s%s\n", BOOT_DEV_DIR,
+		snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR,
 				prefix.c_str(),
 				AB_SLOT_B_SUFFIX);
-		if (stat(buf, &st))
+		LOGD("\t_b Path: '%s'\n", buf);
+		rc = stat(buf, &st);
+		if (rc < 0) {
+			fprintf(stderr, "Failed to stat() path: %d: %s\n", rc, strerror(errno));
 			continue;
+		}
 		memset(slotA, 0, sizeof(slotA));
 		memset(slotB, 0, sizeof(slotA));
-		snprintf(slotA, sizeof(slotA) - 1, "%s%s\n", prefix.c_str(),
+		snprintf(slotA, sizeof(slotA) - 1, "%s%s", prefix.c_str(),
 				AB_SLOT_A_SUFFIX);
-		snprintf(slotB, sizeof(slotB) - 1,"%s%s\n", prefix.c_str(),
+		snprintf(slotB, sizeof(slotB) - 1,"%s%s", prefix.c_str(),
 				AB_SLOT_B_SUFFIX);
 		//Get the disk containing the partitions that were passed in.
 		//All partitions passed in must lie on the same disk.
@@ -478,6 +529,12 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 					prefix.c_str());
 			goto error;
 		}
+		LOGD("\tAB attr (A): 0x%x (backup: 0x%x)\n",
+			*(uint16_t*)(pentryA + AB_FLAG_OFFSET),
+			*(uint16_t*)(pentryA_bak + AB_FLAG_OFFSET));
+		LOGD("\tAB attr (B): 0x%x (backup: 0x%x)\n",
+			*(uint16_t*)(pentryB + AB_FLAG_OFFSET),
+			*(uint16_t*)(pentryB_bak + AB_FLAG_OFFSET));
 		memset(active_guid, '\0', sizeof(active_guid));
 		memset(inactive_guid, '\0', sizeof(inactive_guid));
 		if (get_partition_attribute(slotA, ATTR_SLOT_ACTIVE) == 1) {
@@ -497,6 +554,8 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 			fprintf(stderr, "Both A & B are inactive..Aborting");
 			goto error;
 		}
+		// printf("\tActive GUID: %s\n", active_guid);
+		// printf("\tInactive GUID: %s\n", active_guid);
 		if (!strncmp(slot_suffix_arr[slot], AB_SLOT_A_SUFFIX,
 					strlen(AB_SLOT_A_SUFFIX))){
 			//Mark A as active in primary table
@@ -522,12 +581,10 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 			fprintf(stderr, "%s: Unknown slot suffix!\n", __func__);
 			goto error;
 		}
-		if (disk) {
-			if (gpt_disk_update_crc(disk) != 0) {
-				fprintf(stderr, "%s: Failed to update gpt_disk crc\n",
-						__func__);
-				goto error;
-			}
+		if (gpt_disk_update_crc(disk) != 0) {
+			fprintf(stderr, "%s: Failed to update gpt_disk crc\n",
+					__func__);
+			goto error;
 		}
 	}
 	//write updated content to disk
@@ -546,39 +603,26 @@ error:
 	return -1;
 }
 
-unsigned get_active_boot_slot(struct boot_control_module *module)
+unsigned get_active_boot_slot()
 {
-	printf("%s\n", __func__);
-	if (!module) {
-		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		// The HAL spec requires that we return a number between
-		// 0 to num_slots - 1. Since something went wrong here we
-		// are just going to return the default slot.
-		return 0;
-	}
 
-	uint32_t num_slots = get_number_slots(module);
+	uint32_t num_slots = get_number_slots();
 	if (num_slots <= 1) {
 		//Slot 0 is the only slot around.
 		return 0;
 	}
 
 	for (uint32_t i = 0; i < num_slots; i++) {
-		char bootPartition[MAX_GPT_NAME_SIZE + 1] = {0};
-		snprintf(bootPartition, sizeof(bootPartition) - 1, "boot%s",
-		         slot_suffix_arr[i]);
-		if (get_partition_attribute(bootPartition, ATTR_SLOT_ACTIVE) == 1) {
+		if (get_boot_attr(i, ATTR_SLOT_ACTIVE))
 			return i;
-		}
 	}
 
 	fprintf(stderr, "%s: Failed to find the active boot slot\n", __func__);
 	return 0;
 }
 
-int set_active_boot_slot(struct boot_control_module *module, unsigned slot)
+int set_active_boot_slot(unsigned slot)
 {
-	printf("%s\n", __func__);
 	map<string, vector<string>> ptn_map;
 	vector<string> ptn_vec;
 	const char ptn_list[][MAX_GPT_NAME_SIZE] = { AB_PTN_LIST };
@@ -587,10 +631,11 @@ int set_active_boot_slot(struct boot_control_module *module, unsigned slot)
 	int is_ufs = gpt_utils_is_ufs_device();
 	map<string, vector<string>>::iterator map_iter;
 
-	if (boot_control_check_slot_sanity(module, slot)) {
+	if (boot_control_check_slot_sanity(slot)) {
 		fprintf(stderr, "%s: Bad arguments\n", __func__);
 		goto error;
 	}
+
 	//The partition list just contains prefixes(without the _a/_b) of the
 	//partitions that support A/B. In order to get the layout we need the
 	//actual names. To do this we append the slot suffix to every member
@@ -650,10 +695,9 @@ error:
 	return -1;
 }
 
-int set_slot_as_unbootable(struct boot_control_module *module, unsigned slot)
+int set_slot_as_unbootable(unsigned slot)
 {
-	printf("%s\n", __func__);
-	if (boot_control_check_slot_sanity(module, slot) != 0) {
+	if (boot_control_check_slot_sanity(slot) != 0) {
 		fprintf(stderr, "%s: Argument check failed\n", __func__);
 		goto error;
 	}
@@ -667,32 +711,12 @@ error:
 	return -1;
 }
 
-int is_slot_bootable(struct boot_control_module *module, unsigned slot)
-{
-	printf("%s\n", __func__);
-	int attr = 0;
-	char bootPartition[MAX_GPT_NAME_SIZE + 1] = {0};
-
-	if (boot_control_check_slot_sanity(module, slot) != 0) {
-		fprintf(stderr, "%s: Argument check failed\n", __func__);
-		goto error;
-	}
-	snprintf(bootPartition,
-			sizeof(bootPartition) - 1, "boot%s",
-			slot_suffix_arr[slot]);
-	attr = get_partition_attribute(bootPartition, ATTR_UNBOOTABLE);
-	if (attr >= 0)
-		return !attr;
-error:
-	return -1;
-}
-
-int is_slot_marked_successful(struct boot_control_module *module, unsigned slot)
+int is_slot_marked_successful(unsigned slot)
 {
 	int attr = 0;
 	char bootPartition[MAX_GPT_NAME_SIZE + 1] = {0};
 
-	if (boot_control_check_slot_sanity(module, slot) != 0) {
+	if (boot_control_check_slot_sanity(slot) != 0) {
 		fprintf(stderr, "%s: Argument check failed\n", __func__);
 		goto error;
 	}
@@ -700,13 +724,14 @@ int is_slot_marked_successful(struct boot_control_module *module, unsigned slot)
 			sizeof(bootPartition) - 1,
 			"boot%s", slot_suffix_arr[slot]);
 	attr = get_partition_attribute(bootPartition, ATTR_BOOT_SUCCESSFUL);
-	printf("%s(): slot = %d, attr = 0x%x\n", __func__, slot, attr);
+	LOGD("%s: slot = %d, attr = 0x%x\n", __func__, slot, attr);
 	if (attr >= 0)
 		return attr;
 error:
 	return -1;
 }
 
+/*
 const struct boot_control_module HAL_MODULE_INFO_SYM = {
 	.init = boot_control_init,
 	.getNumberSlots = get_number_slots,
@@ -719,3 +744,158 @@ const struct boot_control_module HAL_MODULE_INFO_SYM = {
 	.isSlotMarkedSuccessful = is_slot_marked_successful,
 	.getActiveBootSlot = get_active_boot_slot,
 };
+*/
+
+struct slot_info {
+	bool active;
+	bool successful;
+	bool bootable;
+};
+
+int usage()
+{
+   fprintf(stderr, "qbootctl: qcom bootctrl HAL port for Linux\n");
+   fprintf(stderr, "-------------------------------------------\n");
+   fprintf(stderr, "qbootctl [-c|-m|-s|-u|-b|-n|-x] [SLOT]\n\n");
+   fprintf(stderr, "    <no args>        dump slot info (default)\n");
+   fprintf(stderr, "    -h               this help text\n");
+   fprintf(stderr, "    -c               get the current slot\n");
+   fprintf(stderr, "    -a               get the active slot\n");
+   fprintf(stderr, "    -b SLOT          check if SLOT is marked as bootable\n");
+   fprintf(stderr, "    -n SLOT          check if SLOT is marked as successful\n");
+   fprintf(stderr, "    -x [SLOT]        get the slot suffix for SLOT (default: current)\n");
+   fprintf(stderr, "    -s SLOT          set to active slot to SLOT\n");
+   fprintf(stderr, "    -m [SLOT]        mark a boot as successful (default: current)\n");
+   fprintf(stderr, "    -u [SLOT]        mark SLOT as unbootable (default: current)\n");
+
+   return 1;
+}
+
+int get_slot_info(struct slot_info *slots) {
+	int rc;
+	uint32_t active_slot = get_active_boot_slot();
+
+	slots[active_slot].active = true;
+
+	for (size_t i = 0; i < 2; i++)
+	{
+		rc = is_slot_marked_successful(i);
+		if (rc < 0)
+			return rc;
+		slots[i].successful = rc;
+		rc = is_slot_bootable(i);
+		if (rc < 0)
+			return rc;
+		slots[i].bootable = rc;
+	}
+
+	return 0;
+}
+
+void dump_info() {
+	struct slot_info slots[2] = {{0}};
+	int current_slot = get_current_slot();
+	
+	get_slot_info(slots);
+
+	printf("Current slot: %s\n", current_slot >= 0 ? slot_suffix_arr[current_slot] : "N/A");
+	for (size_t i = 0; i < 2; i++)
+	{
+		printf("SLOT %s:\n", slot_suffix_arr[i]);
+		printf("\tActive      : %d\n", slots[i].active);
+		printf("\tSuccessful  : %d\n", slots[i].successful);
+		printf("\tBootable    : %d\n", slots[i].bootable);
+	}
+}
+
+int main (int argc, char **argv) {
+	int optflag;
+	int slot = -1;
+	int rc;
+	char *end;
+
+	switch(argc) {
+	case 1:
+		dump_info();
+		return 0;
+	case 2:
+		break;
+	case 3:
+		slot = (int)strtol(argv[2], &end, 10);
+		printf("Using slot %d\n", slot);
+		if (end == argv[2] || slot < 0 || slot > 1) {
+			fprintf(stderr, "Expected slot to be '0' or '1' not '%s'\n", argv[2]);
+			return 1;
+		}
+		break;
+	default:
+		return usage();
+	}
+
+	if (slot < 0)
+		slot = get_current_slot();
+
+	optflag = getopt(argc, argv, "hcmas:ub:n:x");
+
+	switch(optflag) {
+	case 'c':
+		slot = get_current_slot();
+		printf("Current slot: %s\n", slot_suffix_arr[slot]);
+		return 0;
+	case 'a':
+		slot = get_active_boot_slot();
+		printf("Active slot: %s\n", slot_suffix_arr[slot]);
+		return 0;
+	case 'b':
+		printf("SLOT %s: is %smarked bootable\n", slot_suffix_arr[slot],
+			is_slot_bootable(slot) == 1 ? "" : "not ");
+		return 0;
+	case 'n':
+		printf("SLOT %s: is %smarked successful\n", slot_suffix_arr[slot],
+			is_slot_marked_successful(slot) == 1 ? "" : "not ");
+		return 0;
+	case 'x':
+		printf("%s\n", slot_suffix_arr[slot]);
+		return 0;
+	case 's':
+		rc = set_active_boot_slot(slot);
+		if (rc < 0) {
+			fprintf(stderr, "SLOT %s: Failed to set active\n",
+					slot_suffix_arr[slot]);
+			return 1;
+		}
+		printf("SLOT %d: Set as active slot\n", slot);
+		return 0;
+	case 'm':
+		rc = mark_boot_successful(slot);
+		if (rc < 0)
+			return 1;
+		printf("SLOT %s: Marked boot successful\n", slot_suffix_arr[slot]);
+		return 0;
+	case 'u':
+		rc = set_slot_as_unbootable(slot);
+		if (rc < 0) {
+			fprintf(stderr, "SLOT %s: Failed to set as unbootable\n",
+					slot_suffix_arr[slot]);
+			return 1;
+		}
+		printf("SLOT %s: Set as unbootable\n", slot_suffix_arr[slot]);
+		return 0;
+	case 'h':
+	default:
+		usage();
+		return 0;
+	}
+//     printf("======= Current slot: %d\n", get_current_slot());
+//     printf("======= isslotbootable: a = %d, b = %d\n", is_slot_bootable(0),
+//     is_slot_bootable(1));
+//     printf("======= markBootSuccessful: %d\n", bootctl->markBootSuccessful());
+//     printf("======= isSlotMarkedSuccessful: a = %d, b = %d\n", bootctl->isSlotMarkedSuccessful(0),
+//     bootctl->isSlotMarkedSuccessful(1));
+//     printf("\n\n\n trying to switch to slot b: %d\n",
+//         bootctl->setActiveBootSlot(1));
+
+	return 0;
+}
+
+

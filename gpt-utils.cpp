@@ -309,47 +309,6 @@ error:
 	return -1;
 }
 
-int add_lun_to_update_list(char *lun_path, struct update_data *dat)
-{
-	uint32_t i = 0;
-	struct stat st;
-	if (!lun_path || !dat) {
-		fprintf(stderr, "%s: Invalid data\n", __func__);
-		return -1;
-	}
-	if (stat(lun_path, &st)) {
-		fprintf(stderr,
-			"%s: Unable to access %s. Skipping adding to list\n",
-			__func__, lun_path);
-		return -1;
-	}
-	if (dat->num_valid_entries == 0) {
-		fprintf(stderr, "%s: Copying %s into lun_list[%d]\n", __func__,
-			lun_path, i);
-		strlcpy(dat->lun_list[0], lun_path, PATH_MAX * sizeof(char));
-		dat->num_valid_entries = 1;
-	} else {
-		for (i = 0; (i < dat->num_valid_entries) &&
-			    (dat->num_valid_entries < MAX_LUNS - 1);
-		     i++) {
-			//Check if the current LUN is not already part
-			//of the lun list
-			if (!strncmp(lun_path, dat->lun_list[i],
-				     strlen(dat->lun_list[i]))) {
-				//LUN already in list..Return
-				return 0;
-			}
-		}
-		fprintf(stderr, "%s: Copying %s into lun_list[%d]\n", __func__,
-			lun_path, dat->num_valid_entries);
-		//Add LUN path lun list
-		strlcpy(dat->lun_list[dat->num_valid_entries], lun_path,
-			PATH_MAX * sizeof(char));
-		dat->num_valid_entries++;
-	}
-	return 0;
-}
-
 //Given a parttion name(eg: rpm) get the path to the block device that
 //represents the GPT disk the partition resides on. In the case of emmc it
 //would be the default emmc dev(/dev/mmcblk0). In the case of UFS we look

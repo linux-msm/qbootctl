@@ -300,8 +300,6 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 	LOGD("%s: setting %s lun as boot lun\n", __func__, boot_dev);
 
 	if (set_boot_lun(boot_lun_id)) {
-		fprintf(stderr, "%s: Failed to set xblbak as boot partition\n",
-			__func__);
 		goto error;
 	}
 	return 0;

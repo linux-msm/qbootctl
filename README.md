@@ -39,3 +39,8 @@ qbootctl [-c|-m|-s|-u|-b|-n|-x] [SLOT]
 ## Debugging
 
 Set `DEBUG` to 1 in `utils.h` to enable debug logging.
+
+## Documentation
+
+A more details explanation and a list of devices where qbootctl has been
+validated can be found [on the postmarketOS wiki](https://wiki.postmarketos.org/wiki/Android_AB_Slots):

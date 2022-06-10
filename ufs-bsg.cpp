@@ -45,52 +45,30 @@
 #include "utils.h"
 #include "ufs-bsg.h"
 
-// FIXME: replace this with something that actually works
-// static int get_ufs_bsg_dev(void)
-// {
-//     DIR *dir;
-//     struct dirent *ent;
-//     int ret = -ENODEV;
+/* UFS BSG device node */
+static char ufs_bsg_dev[FNAME_SZ] = "/dev/bsg/ufs-bsg0";
 
-//     if ((dir = opendir ("/dev")) != NULL) {
-//         /* read all the files and directories within directory */
-//         while ((ent = readdir(dir)) != NULL) {
-//             if (!strcmp(ent->d_name, "bsg") ||
-//                     !strcmp(ent->d_name, "ufs-bsg0")) {
-//                 snprintf(ufs_bsg_dev, FNAME_SZ, "/dev/%s", ent->d_name);
-//                 ret = 0;
-//                 break;
-//             }
-//         }
-//         if (ret)
-//             fprintf(stderr, "could not find the ufs-bsg dev\n");
-//         closedir (dir);
-//     } else {
-//         /* could not open directory */
-//         fprintf(stderr, "could not open /dev (error no: %d)\n", errno);
-//         ret = -EINVAL;
-//     }
+static int fd_ufs_bsg = 0;
 
-//     return ret;
-// }
-
-int ufs_bsg_dev_open(void)
+int ufs_bsg_dev_open()
 {
-	int ret;
-	if (!fd_ufs_bsg) {
-		fd_ufs_bsg = open(ufs_bsg_dev, O_RDWR);
-		ret = errno;
-		if (fd_ufs_bsg < 0) {
-			fprintf(stderr, "Unable to open %s (error no: %d)",
-				ufs_bsg_dev, errno);
-			fd_ufs_bsg = 0;
-			return ret;
-		}
+	if (fd_ufs_bsg)
+		return 0;
+
+	fd_ufs_bsg = open(ufs_bsg_dev, O_RDWR);
+	if (fd_ufs_bsg < 0) {
+		fprintf(stderr, "Unable to open '%s': %s\n", ufs_bsg_dev,
+			strerror(errno));
+		fprintf(stderr,
+			"Is CONFIG_SCSI_UFS_BSG is enabled in your kernel?\n");
+		fd_ufs_bsg = 0;
+		return -1;
 	}
+
 	return 0;
 }
 
-void ufs_bsg_dev_close(void)
+void ufs_bsg_dev_close()
 {
 	if (fd_ufs_bsg) {
 		close(fd_ufs_bsg);
@@ -188,9 +166,6 @@ int32_t set_boot_lun(__u8 lun_id)
 	int32_t ret;
 	__u32 boot_lun_id = lun_id;
 
-	//     ret = get_ufs_bsg_dev();
-	//     if (ret)
-	//         return ret;
 	LOGD("Using UFS bsg device: %s\n", ufs_bsg_dev);
 
 	ret = ufs_bsg_dev_open();

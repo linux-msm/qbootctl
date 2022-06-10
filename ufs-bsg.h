@@ -36,11 +36,6 @@
 
 #define DWORD(b3, b2, b1, b0) htobe32((b3 << 24) | (b2 << 16) | (b1 << 8) | b0)
 
-/* UFS BSG device node */
-char ufs_bsg_dev[FNAME_SZ] = "/dev/bsg/ufs-bsg0";
-
-int fd_ufs_bsg;
-
 /* UPIU Transaction Codes */
 enum {
 	UTP_UPIU_NOP_OUT = 0x00,
@@ -90,5 +85,7 @@ enum query_attr_idn {
 	QUERY_ATTR_IDN_POWER_MODE = 0x02,
 	QUERY_ATTR_IDN_ACTIVE_ICC_LVL = 0x03,
 };
+
+int ufs_bsg_dev_open();
 
 #endif /* __RECOVERY_UFS_BSG_H__ */

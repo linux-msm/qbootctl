@@ -33,6 +33,7 @@
 
 #include "utils.h"
 #include "gpt-utils.h"
+#include "ufs-bsg.h"
 
 #include "bootctrl.h"
 
@@ -604,6 +605,10 @@ int set_active_boot_slot(unsigned slot)
 
 	if (boot_control_check_slot_sanity(slot)) {
 		fprintf(stderr, "%s: Bad arguments\n", __func__);
+		goto error;
+	}
+
+	if (ufs_bsg_dev_open() < 0) {
 		goto error;
 	}
 

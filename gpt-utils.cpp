@@ -317,6 +317,7 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf,
 {
 	struct stat st;
 	char path[PATH_MAX] = { 0 };
+	int i;
 
 	(void)st;
 
@@ -334,7 +335,14 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf,
 	if (!buf) {
 		return -1;
 	} else {
-		buf[PATH_TRUNCATE_LOC] = '\0';
+		for (i = strlen(buf); i > 0; i--)
+			if (!isdigit(buf[i - 1]))
+				break;
+
+		if (i >= 2 && buf[i - 1] == 'p' && isdigit(buf[i - 2]))
+			i--;
+
+		buf[i] = 0;
 	}
 	return 0;
 }

@@ -602,13 +602,16 @@ int set_active_boot_slot(unsigned slot)
 	uint32_t i;
 	int rc = -1;
 	map<string, vector<string> >::iterator map_iter;
+	bool ismmc;
 
 	if (boot_control_check_slot_sanity(slot)) {
 		fprintf(stderr, "%s: Bad arguments\n", __func__);
 		goto error;
 	}
 
-	if (ufs_bsg_dev_open() < 0) {
+	ismmc = gpt_utils_is_partition_backed_by_emmc(PTN_XBL AB_SLOT_A_SUFFIX);
+
+	if (!ismmc && ufs_bsg_dev_open() < 0) {
 		goto error;
 	}
 
@@ -618,7 +621,7 @@ int set_active_boot_slot(unsigned slot)
 	//in the list.
 	for (i = 0; i < ARRAY_SIZE(ptn_list); i++) {
 		//XBL is handled differrently for ufs devices so ignore it
-		if (!strncmp(ptn_list[i], PTN_XBL, strlen(PTN_XBL)))
+		if (!ismmc && !strncmp(ptn_list[i], PTN_XBL, strlen(PTN_XBL)))
 			continue;
 		//The partition list will be the list of _a partitions
 		string cur_ptn = ptn_list[i];
@@ -649,6 +652,10 @@ int set_active_boot_slot(unsigned slot)
 			goto error;
 		}
 	}
+
+	// EMMC doesn't need attributes to be set.
+	if (ismmc)
+		return 0;
 
 	if (!strncmp(slot_suffix_arr[slot], AB_SLOT_A_SUFFIX,
 			strlen(AB_SLOT_A_SUFFIX))) {

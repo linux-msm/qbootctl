@@ -781,3 +781,18 @@ error:
 		close(fd);
 	return -1;
 }
+
+//Determine whether to handle the given partition as eMMC or UFS, using the
+//name of the backing device.
+//
+//Note: In undefined cases (i.e. /dev/mmcblk1 and unresolvable), this function
+//will tend to prefer UFS behavior. If it incorrectly reports this, then the
+//program should exit (e.g. by failing) before making any changes.
+bool gpt_utils_is_partition_backed_by_emmc(const char *part) {
+	char devpath[PATH_MAX] = { '\0' };
+
+	if (get_dev_path_from_partition_name(part, devpath, sizeof(devpath)))
+		return false;
+
+	return !strcmp(devpath, EMMC_DEVICE);
+}

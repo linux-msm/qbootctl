@@ -84,6 +84,8 @@ extern "C" {
 		"product"
 #define BOOT_DEV_DIR  "/dev/disk/by-partlabel"
 
+#define EMMC_DEVICE "/dev/mmcblk0"
+
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 enum gpt_instance { PRIMARY_GPT = 0, SECONDARY_GPT };
@@ -163,6 +165,8 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain);
 int gpt_utils_get_partition_map(
 	std::vector<std::string> &partition_list,
 	std::map<std::string, std::vector<std::string> > &partition_map);
+
+bool gpt_utils_is_partition_backed_by_emmc(const char *part);
 #ifdef __cplusplus
 }
 #endif

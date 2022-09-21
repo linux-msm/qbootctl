@@ -317,6 +317,7 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf,
 {
 	struct stat st;
 	char path[PATH_MAX] = { 0 };
+	int i;
 
 	(void)st;
 
@@ -334,7 +335,14 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf,
 	if (!buf) {
 		return -1;
 	} else {
-		buf[PATH_TRUNCATE_LOC] = '\0';
+		for (i = strlen(buf); i > 0; i--)
+			if (!isdigit(buf[i - 1]))
+				break;
+
+		if (i >= 2 && buf[i - 1] == 'p' && isdigit(buf[i - 2]))
+			i--;
+
+		buf[i] = 0;
 	}
 	return 0;
 }
@@ -772,4 +780,19 @@ error:
 	if (fd >= 0)
 		close(fd);
 	return -1;
+}
+
+//Determine whether to handle the given partition as eMMC or UFS, using the
+//name of the backing device.
+//
+//Note: In undefined cases (i.e. /dev/mmcblk1 and unresolvable), this function
+//will tend to prefer UFS behavior. If it incorrectly reports this, then the
+//program should exit (e.g. by failing) before making any changes.
+bool gpt_utils_is_partition_backed_by_emmc(const char *part) {
+	char devpath[PATH_MAX] = { '\0' };
+
+	if (get_dev_path_from_partition_name(part, devpath, sizeof(devpath)))
+		return false;
+
+	return !strcmp(devpath, EMMC_DEVICE);
 }

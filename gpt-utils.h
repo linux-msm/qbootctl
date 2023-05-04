@@ -37,6 +37,7 @@ extern "C" {
 #endif
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #define GPT_SIGNATURE		"EFI PART"
 #define HEADER_SIZE_OFFSET	12

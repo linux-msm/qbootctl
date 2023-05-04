@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdint.h>
 
 #include "utils.h"
 #include "gpt-utils.h"

@@ -68,26 +68,42 @@ enum part_attr_type {
 	ATTR_BOOTABLE,
 };
 
+struct file {
+	int fd = -1;
+
+	~file()
+	{
+		if (fd > -1)
+			close(fd);
+	}
+
+	int open(const char *path)
+	{
+		fd = ::open(path, O_RDONLY);
+		return fd;
+	}
+};
+
 void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
 {
-	int fd;
+	file file;
 	char pcmd[MAX_CMDLINE_SIZE];
 	char *val, *found, *ptr = buf;
-	fd = open("/proc/cmdline", O_RDONLY);
-	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE);
+	file.open("/proc/cmdline");
+	int rc = read(file.fd, pcmd, MAX_CMDLINE_SIZE);
 	if (rc < 0) {
 		fprintf(stderr, "Couldn't open /proc/cmdline: %d (%s)\n", rc,
 			strerror(errno));
 		goto error;
 	}
-	close(fd);
+
 	found = strstr(pcmd, arg);
 	if (!found || !(val = strstr(found, "="))) {
 		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
 		goto error;
 	}
 
-	val++;
+	++val;
 	// no this doesn't handle quotes lol
 	while (*val != ' ') {
 		*ptr++ = *val++;
@@ -103,28 +119,25 @@ error:
 static int get_partition_attribute(char *partname,
 				   enum part_attr_type part_attr)
 {
-	struct gpt_disk *disk = NULL;
+	struct gpt_disk disk;
 	uint8_t *pentry = NULL;
 	int retval = -1;
 	uint8_t *attr = NULL;
 	if (!partname)
-		goto error;
-	disk = gpt_disk_alloc();
-	if (!disk) {
-		fprintf(stderr, "%s: Failed to alloc disk struct\n", __func__);
-		goto error;
-	}
-	if (gpt_disk_get_disk_info(partname, disk)) {
-		fprintf(stderr, "%s: Failed to get disk info\n", __func__);
-		goto error;
-	}
-	pentry = gpt_disk_get_pentry(disk, partname, PRIMARY_GPT);
+		return retval;
 
+	if (gpt_disk_get_disk_info(partname, &disk)) {
+		fprintf(stderr, "%s: Failed to get disk info\n", __func__);
+		return retval;
+	}
+
+	pentry = gpt_disk_get_pentry(&disk, partname, PRIMARY_GPT);
 	if (!pentry) {
 		fprintf(stderr, "%s: pentry does not exist in disk struct\n",
 			__func__);
-		goto error;
+		return retval;
 	}
+
 	attr = pentry + AB_FLAG_OFFSET;
 	LOGD("get_partition_attribute() partname = %s, attr = 0x%x\n", partname,
 	     *attr);
@@ -138,14 +151,8 @@ static int get_partition_attribute(char *partname,
 	} else if (part_attr == ATTR_UNBOOTABLE) {
 		retval = !!(*attr & AB_PARTITION_ATTR_UNBOOTABLE);
 		LOGD("AB_PARTITION_ATTR_UNBOOTABLE, retval = %d\n", retval);
-	} else {
-		retval = -1;
 	}
-	gpt_disk_free(disk);
-	return retval;
-error:
-	if (disk)
-		gpt_disk_free(disk);
+
 	return retval;
 }
 
@@ -156,7 +163,7 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
 	unsigned int i = 0;
 	char buf[PATH_MAX];
 	struct stat st;
-	struct gpt_disk *disk = NULL;
+	struct gpt_disk disk;
 	uint8_t *pentry = NULL;
 	uint8_t *pentry_bak = NULL;
 	int rc = -1;
@@ -167,17 +174,20 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
 	int slot_name_valid = 0;
 	if (!slot) {
 		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	for (i = 0; slot_suffix_arr[i] != NULL; i++) {
 		if (!strncmp(slot, slot_suffix_arr[i],
 			     strlen(slot_suffix_arr[i])))
 			slot_name_valid = 1;
 	}
+
 	if (!slot_name_valid) {
 		fprintf(stderr, "%s: Invalid slot name\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	for (i = 0; i < ARRAY_SIZE(ptn_list); i++) {
 		memset(buf, '\0', sizeof(buf));
 		//Check if A/B versions of this ptn exist
@@ -197,26 +207,23 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
 		memset(partName, '\0', sizeof(partName));
 		snprintf(partName, sizeof(partName) - 1, "%s%s", ptn_list[i],
 			 slot);
-		disk = gpt_disk_alloc();
-		if (!disk) {
-			fprintf(stderr, "%s: Failed to alloc disk struct\n",
-				__func__);
-			goto error;
-		}
-		rc = gpt_disk_get_disk_info(partName, disk);
+		rc = gpt_disk_get_disk_info(partName, &disk);
 		if (rc != 0) {
 			fprintf(stderr, "%s: Failed to get disk info for %s\n",
 				__func__, partName);
-			goto error;
+			return -1;
 		}
-		pentry = gpt_disk_get_pentry(disk, partName, PRIMARY_GPT);
-		pentry_bak = gpt_disk_get_pentry(disk, partName, SECONDARY_GPT);
+
+		pentry = gpt_disk_get_pentry(&disk, partName, PRIMARY_GPT);
+		pentry_bak =
+			gpt_disk_get_pentry(&disk, partName, SECONDARY_GPT);
 		if (!pentry || !pentry_bak) {
 			fprintf(stderr,
 				"%s: Failed to get pentry/pentry_bak for %s\n",
 				__func__, partName);
-			goto error;
+			return -1;
 		}
+
 		attr = pentry + AB_FLAG_OFFSET;
 		LOGD("%s: got pentry for part '%s': 0x%lx (at flags: 0x%x)\n",
 		     __func__, partName, *(uint64_t *)pentry, *attr);
@@ -241,42 +248,55 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
 			break;
 		default:
 			fprintf(stderr, "%s: Unrecognized attr\n", __func__);
-			goto error;
+			return -1;
 		}
-		if (gpt_disk_update_crc(disk)) {
+
+		if (gpt_disk_update_crc(&disk)) {
 			fprintf(stderr, "%s: Failed to update crc for %s\n",
 				__func__, partName);
-			goto error;
+			return -1;
 		}
-		if (gpt_disk_commit(disk)) {
+
+		if (gpt_disk_commit(&disk)) {
 			fprintf(stderr,
 				"%s: Failed to write back entry for %s\n",
 				__func__, partName);
-			goto error;
+			return -1;
 		}
-		gpt_disk_free(disk);
-		disk = NULL;
 	}
+
 	return 0;
-error:
-	if (disk)
-		gpt_disk_free(disk);
-	return -1;
 }
+
+struct dir {
+	DIR *dir = NULL;
+
+	~dir()
+	{
+		if (dir)
+			closedir(dir);
+	}
+
+	DIR *open(const char *name)
+	{
+		dir = opendir(name);
+		return dir;
+	}
+};
 
 unsigned get_number_slots()
 {
 	struct dirent *de = NULL;
-	DIR *dir_bootdev = NULL;
+	dir dir_bootdev;
 	unsigned slot_count = 0;
 
-	dir_bootdev = opendir(BOOTDEV_DIR);
-	if (!dir_bootdev) {
+	if (!dir_bootdev.open(BOOTDEV_DIR)) {
 		fprintf(stderr, "%s: Failed to open bootdev dir (%s)\n",
 			__func__, strerror(errno));
-		goto error;
+		return 0;
 	}
-	while ((de = readdir(dir_bootdev))) {
+
+	while ((de = readdir(dir_bootdev.dir))) {
 		if (de->d_name[0] == '.')
 			continue;
 		static_assert(AB_SLOT_A_SUFFIX[0] == '_',
@@ -290,12 +310,8 @@ unsigned get_number_slots()
 			slot_count++;
 		}
 	}
-	closedir(dir_bootdev);
+
 	return slot_count;
-error:
-	if (dir_bootdev)
-		closedir(dir_bootdev);
-	return 0;
 }
 
 static unsigned int get_current_slot()
@@ -308,12 +324,14 @@ static unsigned int get_current_slot()
 		//Slot 0 is the only slot around.
 		return 0;
 	}
+
 	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "_a");
 	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
 		fprintf(stderr, "%s: Unable to read boot slot property\n",
 			__func__);
-		goto error;
+		return 0;
 	}
+
 	//Iterate through a list of partitons named as boot+suffix
 	//and see which one is currently active.
 	for (i = 0; slot_suffix_arr[i] != NULL; i++) {
@@ -323,7 +341,7 @@ static unsigned int get_current_slot()
 			return i;
 		}
 	}
-error:
+
 	//The HAL spec requires that we return a number between
 	//0 to num_slots - 1. Since something went wrong here we
 	//are just going to return the default slot.
@@ -383,13 +401,12 @@ int mark_boot_successful(unsigned slot)
 
 	if (update_slot_attribute(slot_suffix_arr[slot],
 				  ATTR_BOOT_SUCCESSFUL)) {
-		goto error;
+		fprintf(stderr, "SLOT %s: Failed to mark boot successful\n",
+			slot_suffix_arr[slot]);
+		return -1;
 	}
+
 	return 0;
-error:
-	fprintf(stderr, "SLOT %s: Failed to mark boot successful\n",
-		slot_suffix_arr[slot]);
-	return -1;
 }
 
 const char *get_suffix(unsigned slot)
@@ -402,25 +419,17 @@ const char *get_suffix(unsigned slot)
 
 //Return a gpt disk structure representing the disk that holds
 //partition.
-static struct gpt_disk *boot_ctl_get_disk_info(char *partition)
+static bool boot_ctl_get_disk_info(char *partition, gpt_disk *disk)
 {
-	struct gpt_disk *disk = NULL;
 	if (!partition)
-		return NULL;
-	disk = gpt_disk_alloc();
-	if (!disk) {
-		fprintf(stderr, "%s: Failed to alloc disk\n", __func__);
-		goto error;
-	}
+		return false;
+
 	if (gpt_disk_get_disk_info(partition, disk)) {
 		fprintf(stderr, "failed to get disk info for %s\n", partition);
-		goto error;
+		return false;
 	}
-	return disk;
-error:
-	if (disk)
-		gpt_disk_free(disk);
-	return NULL;
+
+	return true;
 }
 
 //The argument here is a vector of partition names(including the slot suffix)
@@ -429,7 +438,7 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 						   unsigned slot)
 {
 	char buf[PATH_MAX] = { 0 };
-	struct gpt_disk *disk = NULL;
+	struct gpt_disk disk;
 	char slotA[MAX_GPT_NAME_SIZE + 1] = { 0 };
 	char slotB[MAX_GPT_NAME_SIZE + 1] = { 0 };
 	char active_guid[TYPE_GUID_SIZE + 1] = { 0 };
@@ -455,8 +464,9 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 		if (prefix.size() < (strlen(AB_SLOT_A_SUFFIX) + 1)) {
 			fprintf(stderr, "Invalid partition name: %s\n",
 				prefix.c_str());
-			goto error;
+			return -1;
 		}
+
 		prefix.resize(prefix.size() - strlen(AB_SLOT_A_SUFFIX));
 		//Check if A/B versions of this ptn exist
 		snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR,
@@ -484,26 +494,26 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 			 AB_SLOT_A_SUFFIX);
 		snprintf(slotB, sizeof(slotB) - 1, "%s%s", prefix.c_str(),
 			 AB_SLOT_B_SUFFIX);
+
 		//Get the disk containing the partitions that were passed in.
 		//All partitions passed in must lie on the same disk.
-		if (!disk) {
-			disk = boot_ctl_get_disk_info(slotA);
-			if (!disk)
-				goto error;
-		}
+		if (!boot_ctl_get_disk_info(slotA, &disk))
+			return -1;
+
 		//Get partition entry for slot A & B from the primary
 		//and backup tables.
-		pentryA = gpt_disk_get_pentry(disk, slotA, PRIMARY_GPT);
-		pentryA_bak = gpt_disk_get_pentry(disk, slotA, SECONDARY_GPT);
-		pentryB = gpt_disk_get_pentry(disk, slotB, PRIMARY_GPT);
-		pentryB_bak = gpt_disk_get_pentry(disk, slotB, SECONDARY_GPT);
+		pentryA = gpt_disk_get_pentry(&disk, slotA, PRIMARY_GPT);
+		pentryA_bak = gpt_disk_get_pentry(&disk, slotA, SECONDARY_GPT);
+		pentryB = gpt_disk_get_pentry(&disk, slotB, PRIMARY_GPT);
+		pentryB_bak = gpt_disk_get_pentry(&disk, slotB, SECONDARY_GPT);
 		if (!pentryA || !pentryA_bak || !pentryB || !pentryB_bak) {
 			//None of these should be NULL since we have already
 			//checked for A & B versions earlier.
 			fprintf(stderr, "Slot pentries for %s not found.\n",
 				prefix.c_str());
-			goto error;
+			return -1;
 		}
+
 		LOGD("\tAB attr (A): 0x%x (backup: 0x%x)\n",
 		     *(uint16_t *)(pentryA + AB_FLAG_OFFSET),
 		     *(uint16_t *)(pentryA_bak + AB_FLAG_OFFSET));
@@ -527,8 +537,9 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 			       TYPE_GUID_SIZE);
 		} else {
 			fprintf(stderr, "Both A & B are inactive..Aborting");
-			goto error;
+			return -1;
 		}
+
 		// printf("\tActive GUID: %s\n", active_guid);
 		// printf("\tInactive GUID: %s\n", active_guid);
 		if (!strncmp(slot_suffix_arr[slot], AB_SLOT_A_SUFFIX,
@@ -554,28 +565,23 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
 		} else {
 			//Something has gone terribly terribly wrong
 			fprintf(stderr, "%s: Unknown slot suffix!\n", __func__);
-			goto error;
+			return -1;
 		}
-		if (gpt_disk_update_crc(disk) != 0) {
+
+		if (gpt_disk_update_crc(&disk) != 0) {
 			fprintf(stderr, "%s: Failed to update gpt_disk crc\n",
 				__func__);
-			goto error;
+			return -1;
 		}
 	}
-	//write updated content to disk
-	if (disk) {
-		if (gpt_disk_commit(disk)) {
-			fprintf(stderr, "Failed to commit disk entry");
-			goto error;
-		}
-		gpt_disk_free(disk);
-	}
-	return 0;
 
-error:
-	if (disk)
-		gpt_disk_free(disk);
-	return -1;
+	//write updated content to disk
+	if (gpt_disk_commit(&disk)) {
+		fprintf(stderr, "Failed to commit disk entry");
+		return -1;
+	}
+
+	return 0;
 }
 
 unsigned get_active_boot_slot()
@@ -607,13 +613,13 @@ int set_active_boot_slot(unsigned slot)
 
 	if (boot_control_check_slot_sanity(slot)) {
 		fprintf(stderr, "%s: Bad arguments\n", __func__);
-		goto error;
+		return -1;
 	}
 
 	ismmc = gpt_utils_is_partition_backed_by_emmc(PTN_XBL AB_SLOT_A_SUFFIX);
 
 	if (!ismmc && ufs_bsg_dev_open() < 0) {
-		goto error;
+		return -1;
 	}
 
 	//The partition list just contains prefixes(without the _a/_b) of the
@@ -629,6 +635,7 @@ int set_active_boot_slot(unsigned slot)
 		cur_ptn.append(AB_SLOT_A_SUFFIX);
 		ptn_vec.push_back(cur_ptn);
 	}
+
 	//The partition map gives us info in the following format:
 	// [path_to_block_device_1]--><partitions on device 1>
 	// [path_to_block_device_2]--><partitions on device 2>
@@ -638,8 +645,9 @@ int set_active_boot_slot(unsigned slot)
 	// [/dev/block/sdb]---><system, boot, rpm, tz,....>
 	if (gpt_utils_get_partition_map(ptn_vec, ptn_map)) {
 		fprintf(stderr, "%s: Failed to get partition map\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	for (map_iter = ptn_map.begin(); map_iter != ptn_map.end();
 	     map_iter++) {
 		if (map_iter->second.size() < 1)
@@ -649,8 +657,7 @@ int set_active_boot_slot(unsigned slot)
 			fprintf(stderr,
 				"%s: Failed to set active slot for partitions \n",
 				__func__);
-			;
-			goto error;
+			return -1;
 		}
 	}
 
@@ -669,19 +676,17 @@ int set_active_boot_slot(unsigned slot)
 	} else {
 		//Something has gone terribly terribly wrong
 		fprintf(stderr, "%s: Unknown slot suffix!\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	if (rc) {
 		fprintf(stderr,
 			"%s: Failed to switch xbl boot partition\n",
 			__func__);
-		goto error;
+		return -1;
 	}
 
 	return 0;
-
-error:
-	return -1;
 }
 
 int set_slot_as_unbootable(unsigned slot)
@@ -706,15 +711,16 @@ int is_slot_marked_successful(unsigned slot)
 
 	if (boot_control_check_slot_sanity(slot) != 0) {
 		fprintf(stderr, "%s: Argument check failed\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	snprintf(bootPartition, sizeof(bootPartition) - 1, "boot%s",
 		 slot_suffix_arr[slot]);
 	attr = get_partition_attribute(bootPartition, ATTR_BOOT_SUCCESSFUL);
 	LOGD("%s: slot = %d, attr = 0x%x\n", __func__, slot, attr);
 	if (attr >= 0)
 		return attr;
-error:
+
 	return -1;
 }
 

@@ -272,7 +272,7 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 		else {
 			fprintf(stderr, "%s: Failed to locate secondary xbl\n",
 				__func__);
-			goto error;
+			return -1;
 		}
 	} else if (chain == NORMAL_BOOT) {
 		boot_lun_id = BOOT_LUN_A_ID;
@@ -283,28 +283,28 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 		else {
 			fprintf(stderr, "%s: Failed to locate primary xbl\n",
 				__func__);
-			goto error;
+			return -1;
 		}
 	} else {
 		fprintf(stderr, "%s: Invalid boot chain id\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	//We need either both xbl and xblbak or both xbl_a and xbl_b to exist at
 	//the same time. If not the current configuration is invalid.
 	if ((stat(XBL_PRIMARY, &st) || stat(XBL_BACKUP, &st)) &&
 	    (stat(XBL_AB_PRIMARY, &st) || stat(XBL_AB_SECONDARY, &st))) {
 		fprintf(stderr, "%s:primary/secondary XBL prt not found(%s)\n",
 			__func__, strerror(errno));
-		goto error;
+		return -1;
 	}
+
 	LOGD("%s: setting %s lun as boot lun\n", __func__, boot_dev);
 
-	if (set_boot_lun(boot_lun_id)) {
-		goto error;
-	}
+	if (set_boot_lun(boot_lun_id))
+		return -1;
+
 	return 0;
-error:
-	return -1;
 }
 
 //Given a parttion name(eg: rpm) get the path to the block device that
@@ -387,16 +387,16 @@ static uint32_t gpt_get_block_size(int fd)
 	uint32_t block_size = 0;
 	if (fd < 0) {
 		fprintf(stderr, "%s: invalid descriptor\n", __func__);
-		goto error;
+		return 0;
 	}
+
 	if (ioctl(fd, BLKSSZGET, &block_size) != 0) {
 		fprintf(stderr, "%s: Failed to get GPT dev block size : %s\n",
 			__func__, strerror(errno));
-		goto error;
+		return 0;
 	}
+
 	return block_size;
-error:
-	return 0;
 }
 
 //Write the GPT header present in the passed in buffer back to the
@@ -408,146 +408,150 @@ static int gpt_set_header(uint8_t *gpt_header, int fd,
 	off_t gpt_header_offset = 0;
 	if (!gpt_header || fd < 0) {
 		fprintf(stderr, "%s: Invalid arguments\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	block_size = gpt_get_block_size(fd);
 	LOGD("%s: Block size is : %d\n", __func__, block_size);
 	if (block_size == 0) {
 		fprintf(stderr, "%s: Failed to get block size\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	if (instance == PRIMARY_GPT)
 		gpt_header_offset = block_size;
 	else
 		gpt_header_offset = lseek64(fd, 0, SEEK_END) - block_size;
+
 	if (gpt_header_offset <= 0) {
 		fprintf(stderr, "%s: Failed to get gpt header offset\n",
 			__func__);
-		goto error;
+		return -1;
 	}
+
 	LOGD("%s: Writing back header to offset %ld\n", __func__,
 	     gpt_header_offset);
 	if (blk_rw(fd, 1, gpt_header_offset, gpt_header, block_size)) {
 		fprintf(stderr, "%s: Failed to write back GPT header\n",
 			__func__);
-		goto error;
+		return -1;
 	}
+
 	return 0;
-error:
-	return -1;
 }
 
+struct file {
+	int fd = -1;
+
+	~file()
+	{
+		if (fd > -1) {
+			fsync(fd);
+			close(fd);
+		}
+	}
+
+	int open(const char *path)
+	{
+		fd = ::open(path, O_RDWR);
+		return fd;
+	}
+};
+
 //Read out the GPT header for the disk that contains the partition partname
-static uint8_t *gpt_get_header(const char *partname, enum gpt_instance instance)
+static bool gpt_get_header(const char *partname, enum gpt_instance instance,
+			   std::vector<uint8_t> *hdr)
 {
-	uint8_t *hdr = NULL;
 	char devpath[PATH_MAX] = { 0 };
 	off_t hdr_offset = 0;
 	uint32_t block_size = 0;
-	int fd = -1;
+	file file;
 	if (!partname) {
 		fprintf(stderr, "%s: Invalid partition name\n", __func__);
-		goto error;
+		return false;
 	}
+
 	if (get_dev_path_from_partition_name(partname, devpath,
 					     sizeof(devpath)) != 0) {
 		fprintf(stderr, "%s: Failed to resolve path for %s\n", __func__,
 			partname);
-		goto error;
+		return false;
 	}
-	fd = open(devpath, O_RDWR);
-	if (fd < 0) {
-		fprintf(stderr, "%s: Failed to open %s : %s\n", __func__,
+
+	if (file.open(devpath) < 0) {
+		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__,
 			devpath, strerror(errno));
-		goto error;
+		return false;
 	}
-	block_size = gpt_get_block_size(fd);
+
+	block_size = gpt_get_block_size(file.fd);
 	if (block_size == 0) {
 		fprintf(stderr, "%s: Failed to get gpt block size for %s\n",
 			__func__, partname);
-		goto error;
+		return false;
 	}
 
-	hdr = (uint8_t *)calloc(block_size, 1);
-	if (!hdr) {
-		fprintf(stderr,
-			"%s: Failed to allocate memory for gpt header\n",
-			__func__);
-	}
+	hdr->resize(block_size);
+	std::fill(hdr->begin(), hdr->end(), 0);
 	if (instance == PRIMARY_GPT)
 		hdr_offset = block_size;
-	else {
-		hdr_offset = lseek64(fd, 0, SEEK_END) - block_size;
-	}
+	else
+		hdr_offset = lseek64(file.fd, 0, SEEK_END) - block_size;
+
 	if (hdr_offset < 0) {
 		fprintf(stderr, "%s: Failed to get gpt header offset\n",
 			__func__);
-		goto error;
+		return false;
 	}
-	if (blk_rw(fd, 0, hdr_offset, hdr, block_size)) {
+
+	if (blk_rw(file.fd, 0, hdr_offset, hdr->data(), block_size)) {
 		fprintf(stderr, "%s: Failed to read GPT header from device\n",
 			__func__);
-		goto error;
+		return false;
 	}
-	//DumpHex(hdr, block_size);
-	close(fd);
-	return hdr;
-error:
-	if (fd >= 0)
-		close(fd);
-	if (hdr)
-		free(hdr);
-	return NULL;
+
+	return true;
 }
 
 //Returns the partition entry array based on the
 //passed in buffer which contains the gpt header.
 //The fd here is the descriptor for the 'disk' which
 //holds the partition
-static uint8_t *gpt_get_pentry_arr(uint8_t *hdr, int fd)
+static bool gpt_get_pentry_arr(uint8_t *hdr, int fd,
+			       std::vector<uint8_t> *pentry_arr)
 {
 	uint64_t pentries_start = 0;
 	uint32_t pentry_size = 0;
 	uint32_t block_size = 0;
 	uint32_t pentries_arr_size = 0;
-	uint8_t *pentry_arr = NULL;
 	int rc = 0;
-	if (!hdr) {
-		fprintf(stderr, "%s: Invalid header\n", __func__);
-		goto error;
-	}
 	if (fd < 0) {
 		fprintf(stderr, "%s: Invalid fd\n", __func__);
-		goto error;
+		return false;
 	}
+
 	block_size = gpt_get_block_size(fd);
 	if (!block_size) {
 		fprintf(stderr, "%s: Failed to get gpt block size for\n",
 			__func__);
-		goto error;
+		return false;
 	}
+
 	pentries_start = GET_8_BYTES(hdr + PENTRIES_OFFSET) * block_size;
 	pentry_size = GET_4_BYTES(hdr + PENTRY_SIZE_OFFSET);
 	pentries_arr_size =
 		GET_4_BYTES(hdr + PARTITION_COUNT_OFFSET) * pentry_size;
-	pentry_arr = (uint8_t *)calloc(1, pentries_arr_size);
-	if (!pentry_arr) {
-		fprintf(stderr,
-			"%s: Failed to allocate memory for partition array\n",
-			__func__);
-		goto error;
-	}
-	rc = blk_rw(fd, 0, pentries_start, pentry_arr, pentries_arr_size);
+	pentry_arr->resize(pentries_arr_size);
+	std::fill(pentry_arr->begin(), pentry_arr->end(), 0);
+	rc = blk_rw(fd, 0, pentries_start, pentry_arr->data(),
+		    pentries_arr_size);
 	if (rc) {
 		fprintf(stderr, "%s: Failed to read partition entry array\n",
 			__func__);
-		goto error;
+		return false;
 	}
-	return pentry_arr;
-error:
-	if (pentry_arr)
-		free(pentry_arr);
-	return NULL;
+
+	return true;
 }
 
 static int gpt_set_pentry_arr(uint8_t *hdr, int fd, uint8_t *arr)
@@ -559,14 +563,16 @@ static int gpt_set_pentry_arr(uint8_t *hdr, int fd, uint8_t *arr)
 	int rc = 0;
 	if (!hdr || fd < 0 || !arr) {
 		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	block_size = gpt_get_block_size(fd);
 	if (!block_size) {
 		fprintf(stderr, "%s: Failed to get gpt block size for\n",
 			__func__);
-		goto error;
+		return -1;
 	}
+
 	LOGD("%s : Block size is %d\n", __func__, block_size);
 	pentries_start = GET_8_BYTES(hdr + PENTRIES_OFFSET) * block_size;
 	pentry_size = GET_4_BYTES(hdr + PENTRY_SIZE_OFFSET);
@@ -580,71 +586,40 @@ static int gpt_set_pentry_arr(uint8_t *hdr, int fd, uint8_t *arr)
 	if (rc) {
 		fprintf(stderr, "%s: Failed to read partition entry array\n",
 			__func__);
-		goto error;
+		return -1;
 	}
+
 	return 0;
-error:
-	return -1;
-}
-
-//Allocate a handle used by calls to the "gpt_disk" api's
-struct gpt_disk *gpt_disk_alloc()
-{
-	struct gpt_disk *disk;
-	disk = (struct gpt_disk *)malloc(sizeof(struct gpt_disk));
-	if (!disk) {
-		fprintf(stderr, "%s: Failed to allocate memory\n", __func__);
-		goto end;
-	}
-	memset(disk, 0, sizeof(struct gpt_disk));
-end:
-	return disk;
-}
-
-//Free previously allocated/initialized handle
-void gpt_disk_free(struct gpt_disk *disk)
-{
-	if (!disk)
-		return;
-	if (disk->hdr)
-		free(disk->hdr);
-	if (disk->hdr_bak)
-		free(disk->hdr_bak);
-	if (disk->pentry_arr)
-		free(disk->pentry_arr);
-	if (disk->pentry_arr_bak)
-		free(disk->pentry_arr_bak);
-	free(disk);
-	return;
 }
 
 //fills up the passed in gpt_disk struct with information about the
 //disk represented by path dev. Returns 0 on success and -1 on error.
-int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
+int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 {
-	struct gpt_disk *disk = NULL;
-	int fd = -1;
+	file file;
 	uint32_t gpt_header_size = 0;
 
-	if (!dsk || !dev) {
+	if (!disk || !dev) {
 		fprintf(stderr, "%s: Invalid arguments\n", __func__);
-		goto error;
+		return -1;
 	}
-	disk = dsk;
-	disk->hdr = gpt_get_header(dev, PRIMARY_GPT);
-	if (!disk->hdr) {
+
+	gpt_get_header(dev, PRIMARY_GPT, &disk->hdr);
+	if (disk->hdr.empty()) {
 		fprintf(stderr, "%s: Failed to get primary header\n", __func__);
-		goto error;
+		return -1;
 	}
-	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
+
+	gpt_header_size = GET_4_BYTES(disk->hdr.data() + HEADER_SIZE_OFFSET);
 	// FIXME: pointer offsets crc bleh
-	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
-	disk->hdr_bak = gpt_get_header(dev, PRIMARY_GPT);
-	if (!disk->hdr_bak) {
+	disk->hdr_crc = crc32(0, disk->hdr.data(), gpt_header_size);
+	gpt_get_header(dev, PRIMARY_GPT, &disk->hdr_bak);
+	if (disk->hdr_bak.empty()) {
 		fprintf(stderr, "%s: Failed to get backup header\n", __func__);
-		goto error;
+		return -1;
 	}
-	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
+
+	disk->hdr_bak_crc = crc32(0, disk->hdr_bak.data(), gpt_header_size);
 
 	//Descriptor for the block device. We will use this for further
 	//modifications to the partition table
@@ -652,42 +627,42 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
 					     sizeof(disk->devpath)) != 0) {
 		fprintf(stderr, "%s: Failed to resolve path for %s\n", __func__,
 			dev);
-		goto error;
+		return -1;
 	}
-	fd = open(disk->devpath, O_RDWR);
-	if (fd < 0) {
+
+	if (file.open(disk->devpath) < 0) {
 		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__,
 			disk->devpath, strerror(errno));
-		goto error;
+		return -1;
 	}
-	disk->pentry_arr = gpt_get_pentry_arr(disk->hdr, fd);
-	if (!disk->pentry_arr) {
+
+	gpt_get_pentry_arr(disk->hdr.data(), file.fd, &disk->pentry_arr);
+	if (disk->pentry_arr.empty()) {
 		fprintf(stderr, "%s: Failed to obtain partition entry array\n",
 			__func__);
-		goto error;
+		return -1;
 	}
-	disk->pentry_arr_bak = gpt_get_pentry_arr(disk->hdr_bak, fd);
-	if (!disk->pentry_arr_bak) {
+
+	gpt_get_pentry_arr(disk->hdr_bak.data(), file.fd,
+			   &disk->pentry_arr_bak);
+	if (disk->pentry_arr_bak.empty()) {
 		fprintf(stderr,
 			"%s: Failed to obtain backup partition entry array\n",
 			__func__);
-		goto error;
+		return -1;
 	}
-	disk->pentry_size = GET_4_BYTES(disk->hdr + PENTRY_SIZE_OFFSET);
+
+	disk->pentry_size = GET_4_BYTES(disk->hdr.data() + PENTRY_SIZE_OFFSET);
 	disk->pentry_arr_size =
-		GET_4_BYTES(disk->hdr + PARTITION_COUNT_OFFSET) *
+		GET_4_BYTES(disk->hdr.data() + PARTITION_COUNT_OFFSET) *
 		disk->pentry_size;
-	disk->pentry_arr_crc = GET_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET);
+	disk->pentry_arr_crc =
+		GET_4_BYTES(disk->hdr.data() + PARTITION_CRC_OFFSET);
 	disk->pentry_arr_bak_crc =
-		GET_4_BYTES(disk->hdr_bak + PARTITION_CRC_OFFSET);
-	disk->block_size = gpt_get_block_size(fd);
-	close(fd);
+		GET_4_BYTES(disk->hdr_bak.data() + PARTITION_CRC_OFFSET);
+	disk->block_size = gpt_get_block_size(file.fd);
 	disk->is_initialized = GPT_DISK_INIT_MAGIC;
 	return 0;
-error:
-	if (fd >= 0)
-		close(fd);
-	return -1;
 }
 
 //Get pointer to partition entry from a allocated gpt_disk structure
@@ -697,15 +672,14 @@ uint8_t *gpt_disk_get_pentry(struct gpt_disk *disk, const char *partname,
 	uint8_t *ptn_arr = NULL;
 	if (!disk || !partname || disk->is_initialized != GPT_DISK_INIT_MAGIC) {
 		fprintf(stderr, "%s: Invalid argument\n", __func__);
-		goto error;
+		return NULL;
 	}
-	ptn_arr = (instance == PRIMARY_GPT) ? disk->pentry_arr :
-						    disk->pentry_arr_bak;
+
+	ptn_arr = (instance == PRIMARY_GPT) ? disk->pentry_arr.data() :
+					      disk->pentry_arr_bak.data();
 	return (gpt_pentry_seek(partname, ptn_arr,
 				ptn_arr + disk->pentry_arr_size,
 				disk->pentry_size));
-error:
-	return NULL;
 }
 
 //Update CRC values for the various components of the gpt_disk
@@ -717,69 +691,68 @@ int gpt_disk_update_crc(struct gpt_disk *disk)
 	uint32_t gpt_header_size = 0;
 	if (!disk || (disk->is_initialized != GPT_DISK_INIT_MAGIC)) {
 		fprintf(stderr, "%s: invalid argument\n", __func__);
-		goto error;
+		return -1;
 	}
+
 	//Recalculate the CRC of the primary partiton array
 	disk->pentry_arr_crc =
-		crc32(0, disk->pentry_arr, disk->pentry_arr_size);
+		crc32(0, disk->pentry_arr.data(), disk->pentry_arr_size);
 	//Recalculate the CRC of the backup partition array
 	disk->pentry_arr_bak_crc =
-		crc32(0, disk->pentry_arr_bak, disk->pentry_arr_size);
+		crc32(0, disk->pentry_arr_bak.data(), disk->pentry_arr_size);
 	//Update the partition CRC value in the primary GPT header
-	PUT_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET, disk->pentry_arr_crc);
+	PUT_4_BYTES(disk->hdr.data() + PARTITION_CRC_OFFSET,
+		    disk->pentry_arr_crc);
 	//Update the partition CRC value in the backup GPT header
-	PUT_4_BYTES(disk->hdr_bak + PARTITION_CRC_OFFSET,
+	PUT_4_BYTES(disk->hdr_bak.data() + PARTITION_CRC_OFFSET,
 		    disk->pentry_arr_bak_crc);
 	//Update the CRC value of the primary header
-	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
+	gpt_header_size = GET_4_BYTES(disk->hdr.data() + HEADER_SIZE_OFFSET);
 	//Header CRC is calculated with its own CRC field set to 0
-	PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, 0);
-	PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, 0);
-	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
-	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
-	PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, disk->hdr_crc);
-	PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, disk->hdr_bak_crc);
+	PUT_4_BYTES(disk->hdr.data() + HEADER_CRC_OFFSET, 0);
+	PUT_4_BYTES(disk->hdr_bak.data() + HEADER_CRC_OFFSET, 0);
+	disk->hdr_crc = crc32(0, disk->hdr.data(), gpt_header_size);
+	disk->hdr_bak_crc = crc32(0, disk->hdr_bak.data(), gpt_header_size);
+	PUT_4_BYTES(disk->hdr.data() + HEADER_CRC_OFFSET, disk->hdr_crc);
+	PUT_4_BYTES(disk->hdr_bak.data() + HEADER_CRC_OFFSET,
+		    disk->hdr_bak_crc);
 	return 0;
-error:
-	return -1;
 }
 
 //Write the contents of struct gpt_disk back to the actual disk
 int gpt_disk_commit(struct gpt_disk *disk)
 {
-	int fd = -1;
+	file file;
 	if (!disk || (disk->is_initialized != GPT_DISK_INIT_MAGIC)) {
 		fprintf(stderr, "%s: Invalid args\n", __func__);
-		goto error;
+		return -1;
 	}
-	fd = open(disk->devpath, O_RDWR);
-	if (fd < 0) {
+
+	if (file.open(disk->devpath) < 0) {
 		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__,
 			disk->devpath, strerror(errno));
-		goto error;
+		return -1;
 	}
+
 	LOGD("%s: Writing back primary GPT header\n", __func__);
 	//Write the primary header
-	if (gpt_set_header(disk->hdr, fd, PRIMARY_GPT) != 0) {
+	if (gpt_set_header(disk->hdr.data(), file.fd, PRIMARY_GPT) != 0) {
 		fprintf(stderr, "%s: Failed to update primary GPT header\n",
 			__func__);
-		goto error;
+		return -1;
 	}
+
 	LOGD("%s: Writing back primary partition array\n", __func__);
 	//Write back the primary partition array
-	if (gpt_set_pentry_arr(disk->hdr, fd, disk->pentry_arr)) {
+	if (gpt_set_pentry_arr(disk->hdr.data(), file.fd,
+			       disk->pentry_arr.data())) {
 		fprintf(stderr,
 			"%s: Failed to write primary GPT partition arr\n",
 			__func__);
-		goto error;
+		return -1;
 	}
-	fsync(fd);
-	close(fd);
+
 	return 0;
-error:
-	if (fd >= 0)
-		close(fd);
-	return -1;
 }
 
 //Determine whether to handle the given partition as eMMC or UFS, using the

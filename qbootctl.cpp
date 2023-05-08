@@ -41,17 +41,23 @@ bool isslotnum(const char* str)
 	return strspn(str, "01") == strlen(str);
 }
 
+static void unexpectedSlot(const char *arg)
+{
+	fprintf(stderr, "Expected slot not '%s'\n", arg);
+	exit(1);
+}
+
 unsigned parseSlot(const char* arg)
 {
 	char *end;
 	int slot;
-	if (!isslot(arg)) {
-		goto fail;
-	}
+	if (!isslot(arg))
+		unexpectedSlot(arg);
+
 	if (isslotnum(arg)) {
 		slot = (int)strtol(arg, &end, 10);
 		if (end == arg)
-			goto fail;
+			unexpectedSlot(arg);
 	} else {
 		switch (arg[0]) {
 		case 'a':
@@ -63,17 +69,11 @@ unsigned parseSlot(const char* arg)
 			slot = 1;
 			break;
 		default:
-			goto fail;
+			unexpectedSlot(arg);
 		}
 	}
 
 	return (unsigned)slot;
-
-fail:
-	fprintf(stderr,
-		"Expected slot not '%s'\n",
-		arg);
-	exit(1);
 }
 
 int usage()

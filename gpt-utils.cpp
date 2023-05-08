@@ -442,7 +442,7 @@ static uint8_t *gpt_get_header(const char *partname, enum gpt_instance instance)
 {
 	uint8_t *hdr = NULL;
 	char devpath[PATH_MAX] = { 0 };
-	uint64_t hdr_offset = 0;
+	off_t hdr_offset = 0;
 	uint32_t block_size = 0;
 	int fd = -1;
 	if (!partname) {

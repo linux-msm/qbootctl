@@ -412,7 +412,7 @@ int mark_boot_successful(unsigned slot)
 const char *get_suffix(unsigned slot)
 {
 	if (boot_control_check_slot_sanity(slot) != 0)
-		return NULL;
+		return "";
 	else
 		return slot_suffix_arr[slot];
 }

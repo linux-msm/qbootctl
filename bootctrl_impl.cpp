@@ -163,7 +163,6 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
 	uint8_t *attr = NULL;
 	uint8_t *attr_bak = NULL;
 	char partName[MAX_GPT_NAME_SIZE + 1] = { 0 };
-	const char ptn_list[][MAX_GPT_NAME_SIZE - 1] = { AB_PTN_LIST };
 	int slot_name_valid = 0;
 	if (!slot) {
 		fprintf(stderr, "%s: Invalid argument\n", __func__);
@@ -178,86 +177,84 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
 		fprintf(stderr, "%s: Invalid slot name\n", __func__);
 		goto error;
 	}
-	for (i = 0; i < ARRAY_SIZE(ptn_list); i++) {
-		memset(buf, '\0', sizeof(buf));
-		//Check if A/B versions of this ptn exist
-		snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR,
-			 ptn_list[i], AB_SLOT_A_SUFFIX);
-		if (stat(buf, &st) < 0) {
-			//partition does not have _a version
-			continue;
-		}
-		memset(buf, '\0', sizeof(buf));
-		snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR,
-			 ptn_list[i], AB_SLOT_B_SUFFIX);
-		if (stat(buf, &st) < 0) {
-			//partition does not have _b version
-			continue;
-		}
-		memset(partName, '\0', sizeof(partName));
-		snprintf(partName, sizeof(partName) - 1, "%s%s", ptn_list[i],
-			 slot);
-		disk = gpt_disk_alloc();
-		if (!disk) {
-			fprintf(stderr, "%s: Failed to alloc disk struct\n",
-				__func__);
-			goto error;
-		}
-		rc = gpt_disk_get_disk_info(partName, disk);
-		if (rc != 0) {
-			fprintf(stderr, "%s: Failed to get disk info for %s\n",
-				__func__, partName);
-			goto error;
-		}
-		pentry = gpt_disk_get_pentry(disk, partName, PRIMARY_GPT);
-		pentry_bak = gpt_disk_get_pentry(disk, partName, SECONDARY_GPT);
-		if (!pentry || !pentry_bak) {
-			fprintf(stderr,
-				"%s: Failed to get pentry/pentry_bak for %s\n",
-				__func__, partName);
-			goto error;
-		}
-		attr = pentry + AB_FLAG_OFFSET;
-		LOGD("%s: got pentry for part '%s': 0x%lx (at flags: 0x%x)\n",
-		     __func__, partName, *(uint64_t *)pentry, *attr);
-		attr_bak = pentry_bak + AB_FLAG_OFFSET;
-		switch (ab_attr) {
-		case ATTR_BOOT_SUCCESSFUL:
-			*attr = (*attr) | AB_PARTITION_ATTR_BOOT_SUCCESSFUL;
-			*attr_bak =
-				(*attr_bak) | AB_PARTITION_ATTR_BOOT_SUCCESSFUL;
-			break;
-		case ATTR_UNBOOTABLE:
-			*attr = (*attr) | AB_PARTITION_ATTR_UNBOOTABLE;
-			*attr_bak = (*attr_bak) | AB_PARTITION_ATTR_UNBOOTABLE;
-			break;
-		case ATTR_BOOTABLE:
-			*attr = (*attr) ^ AB_PARTITION_ATTR_UNBOOTABLE;
-			*attr_bak = (*attr_bak) ^ AB_PARTITION_ATTR_UNBOOTABLE;
-			break;
-		case ATTR_SLOT_ACTIVE:
-			*attr = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
-			*attr_bak = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
-			break;
-		default:
-			fprintf(stderr, "%s: Unrecognized attr\n", __func__);
-			goto error;
-		}
-		if (gpt_disk_update_crc(disk)) {
-			fprintf(stderr, "%s: Failed to update crc for %s\n",
-				__func__, partName);
-			goto error;
-		}
-		if (gpt_disk_commit(disk)) {
-			fprintf(stderr,
-				"%s: Failed to write back entry for %s\n",
-				__func__, partName);
-			goto error;
-		}
-		gpt_disk_free(disk);
-		disk = NULL;
+
+	memset(buf, '\0', sizeof(buf));
+	//Check if A/B versions of this ptn exist
+	snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR, BOOT_PTN,
+		 AB_SLOT_A_SUFFIX);
+	if (stat(buf, &st) < 0) {
+		//partition does not have _a version
+		goto no_error;
 	}
+	memset(buf, '\0', sizeof(buf));
+	snprintf(buf, sizeof(buf) - 1, "%s/%s%s", BOOT_DEV_DIR, BOOT_PTN,
+		 AB_SLOT_B_SUFFIX);
+	if (stat(buf, &st) < 0) {
+		//partition does not have _b version
+		goto no_error;
+	}
+	memset(partName, '\0', sizeof(partName));
+	snprintf(partName, sizeof(partName) - 1, "%s%s", BOOT_PTN, slot);
+	disk = gpt_disk_alloc();
+	if (!disk) {
+		fprintf(stderr, "%s: Failed to alloc disk struct\n", __func__);
+		goto error;
+	}
+	rc = gpt_disk_get_disk_info(partName, disk);
+	if (rc != 0) {
+		fprintf(stderr, "%s: Failed to get disk info for %s\n",
+			__func__, partName);
+		goto error;
+	}
+	pentry = gpt_disk_get_pentry(disk, partName, PRIMARY_GPT);
+	pentry_bak = gpt_disk_get_pentry(disk, partName, SECONDARY_GPT);
+	if (!pentry || !pentry_bak) {
+		fprintf(stderr, "%s: Failed to get pentry/pentry_bak for %s\n",
+			__func__, partName);
+		goto error;
+	}
+	attr = pentry + AB_FLAG_OFFSET;
+	LOGD("%s: got pentry for part '%s': 0x%lx (at flags: 0x%x)\n", __func__,
+	     partName, *(uint64_t *)pentry, *attr);
+	attr_bak = pentry_bak + AB_FLAG_OFFSET;
+	switch (ab_attr) {
+	case ATTR_BOOT_SUCCESSFUL:
+		*attr = (*attr) | AB_PARTITION_ATTR_BOOT_SUCCESSFUL;
+		*attr_bak = (*attr_bak) | AB_PARTITION_ATTR_BOOT_SUCCESSFUL;
+		goto no_error;
+	case ATTR_UNBOOTABLE:
+		*attr = (*attr) | AB_PARTITION_ATTR_UNBOOTABLE;
+		*attr_bak = (*attr_bak) | AB_PARTITION_ATTR_UNBOOTABLE;
+		goto no_error;
+	case ATTR_BOOTABLE:
+		*attr = (*attr) ^ AB_PARTITION_ATTR_UNBOOTABLE;
+		*attr_bak = (*attr_bak) ^ AB_PARTITION_ATTR_UNBOOTABLE;
+		goto no_error;
+	case ATTR_SLOT_ACTIVE:
+		*attr = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
+		*attr_bak = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
+		goto no_error;
+	default:
+		fprintf(stderr, "%s: Unrecognized attr\n", __func__);
+		goto error;
+	}
+	if (gpt_disk_update_crc(disk)) {
+		fprintf(stderr, "%s: Failed to update crc for %s\n", __func__,
+			partName);
+		goto error;
+	}
+	if (gpt_disk_commit(disk)) {
+		fprintf(stderr, "%s: Failed to write back entry for %s\n",
+			__func__, partName);
+		goto error;
+	}
+
+no_error:
+	gpt_disk_free(disk);
+	disk = NULL;
+
 	return 0;
+
 error:
 	if (disk)
 		gpt_disk_free(disk);
@@ -599,8 +596,6 @@ int set_active_boot_slot(unsigned slot)
 {
 	map<string, vector<string> > ptn_map;
 	vector<string> ptn_vec;
-	const char ptn_list[][MAX_GPT_NAME_SIZE] = { AB_PTN_LIST };
-	uint32_t i;
 	int rc = -1;
 	map<string, vector<string> >::iterator map_iter;
 	bool ismmc;
@@ -616,19 +611,9 @@ int set_active_boot_slot(unsigned slot)
 		goto error;
 	}
 
-	//The partition list just contains prefixes(without the _a/_b) of the
-	//partitions that support A/B. In order to get the layout we need the
-	//actual names. To do this we append the slot suffix to every member
-	//in the list.
-	for (i = 0; i < ARRAY_SIZE(ptn_list); i++) {
-		//XBL is handled differrently for ufs devices so ignore it
-		if (!ismmc && !strncmp(ptn_list[i], PTN_XBL, strlen(PTN_XBL)))
-			continue;
-		//The partition list will be the list of _a partitions
-		string cur_ptn = ptn_list[i];
-		cur_ptn.append(AB_SLOT_A_SUFFIX);
-		ptn_vec.push_back(cur_ptn);
-	}
+	//The partition list will be the list of _a partitions
+	ptn_vec.push_back(BOOT_PTN AB_SLOT_A_SUFFIX);
+
 	//The partition map gives us info in the following format:
 	// [path_to_block_device_1]--><partitions on device 1>
 	// [path_to_block_device_2]--><partitions on device 2>

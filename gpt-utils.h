@@ -76,14 +76,7 @@ extern "C" {
 #define AB_SLOT_A_SUFFIX		  "_a"
 #define AB_SLOT_B_SUFFIX		  "_b"
 #define PTN_XBL				  "xbl"
-#define PTN_SWAP_LIST                                                          \
-	PTN_XBL, "abl", "aop", "apdp", "cmnlib", "cmnlib64", "devcfg", "dtbo", \
-		"hyp", "keymaster", "msadp", "qupfw", "storsec", "tz",         \
-		"vbmeta", "vbmeta_system", "xbl_config"
-
-#define AB_PTN_LIST                                                            \
-	PTN_SWAP_LIST, "boot", "system", "vendor", "modem", "system_ext",      \
-		"product"
+#define BOOT_PTN			  "boot"
 #define BOOT_DEV_DIR  "/dev/disk/by-partlabel"
 
 #define EMMC_DEVICE "/dev/mmcblk0"

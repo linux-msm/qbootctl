@@ -82,8 +82,8 @@ extern "C" {
 	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
 	"vbmeta_a", "vbmeta_system_a"
 
-static const char g_all_ptns[][MAX_GPT_NAME_SIZE] = {
-	PTN_SWAP_LIST, "boot_a", "system",
+static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
+	PTN_SWAP_LIST, "boot_a", "system_a",
 	"vendor_a", "modem_a", "system_ext_a", "product_a"
 };
 
@@ -91,6 +91,8 @@ static const char g_all_ptns[][MAX_GPT_NAME_SIZE] = {
 #define MAX_BLOCK_DEVICES 10
 
 #define BOOT_DEV_DIR  "/dev/disk/by-partlabel"
+
+#define GPT_PTN_PATH_MAX sizeof(BOOT_DEV_DIR) + MAX_GPT_NAME_SIZE + 2
 
 #define EMMC_DEVICE "/dev/mmcblk0"
 

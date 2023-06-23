@@ -47,10 +47,10 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <zlib.h>
 
 #include "gpt-utils.h"
 #include "utils.h"
+#include "crc32.h"
 
 /* list the names of the backed-up partitions to be swapped */
 /* extension used for the backup partitions - tzbak, abootbak, etc. */
@@ -97,7 +97,7 @@ enum gpt_state { GPT_OK = 0, GPT_BAD_SIGNATURE, GPT_BAD_CRC };
 // List of LUN's containing boot critical images.
 // Required in the case of UFS devices
 struct update_data {
-	char lun_list[MAX_LUNS][PATH_MAX];
+	char lun_list[MAX_LUNS][GPT_PTN_PATH_MAX];
 	uint32_t num_valid_entries;
 };
 
@@ -292,7 +292,7 @@ error:
 // the path to the LUN from there.
 static int get_dev_path_from_partition_name(const char *partname, char *buf, size_t buflen)
 {
-	char path[PATH_MAX] = { 0 };
+	char path[GPT_PTN_PATH_MAX] = { 0 };
 	int i;
 
 	if (!partname || !buf || buflen < ((PATH_TRUNCATE_LOC) + 1)) {
@@ -386,7 +386,7 @@ error:
 static int gpt_get_headers(const char *partname, uint8_t **primary, uint8_t **backup)
 {
 	uint8_t *hdr = NULL;
-	char devpath[PATH_MAX] = { 0 };
+	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 	off_t hdr_offset = 0;
 	uint32_t block_size = 0;
 	int instance;
@@ -594,7 +594,7 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 {
 	int fd = -1, rc;
 	uint32_t gpt_header_size = 0;
-	char devpath[PATH_MAX] = { 0 };
+	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	if (!disk || !dev) {
 		fprintf(stderr, "%s: Invalid arguments\n", __func__);
@@ -617,6 +617,8 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		gpt_disk_free(disk);
 	}
 
+	LOGD("%s: Initializing disk handle for %s... -> %s\n", __func__, disk->devpath, devpath);
+
 	// devpath popualted by partition_is_for_disk
 	strncpy(disk->devpath, devpath, sizeof(disk->devpath));
 
@@ -631,9 +633,9 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
 
 	// FIXME: pointer offsets crc bleh
-	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
+	disk->hdr_crc = efi_crc32(disk->hdr, gpt_header_size);
 
-	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
+	disk->hdr_bak_crc = efi_crc32(disk->hdr_bak, gpt_header_size);
 
 	fd = open(disk->devpath, O_RDWR);
 	if (fd < 0) {
@@ -699,14 +701,16 @@ static int gpt_disk_update_crc(struct gpt_disk *disk)
 	uint32_t old_crc = disk->pentry_arr_crc;
 #endif
 	// Recalculate the CRC of the primary partiton array
-	disk->pentry_arr_crc = crc32(0, disk->pentry_arr, disk->pentry_arr_size);
-	LOGD("%s() disk %8s GPT hdr len %u crc: %08x -> %08x\n", __func__, disk->devpath,
+	disk->pentry_arr_crc = efi_crc32(disk->pentry_arr, disk->pentry_arr_size);
+	LOGD("%s() disk %8s GPT pentry len %u crc: %08x -> %08x\n", __func__, disk->devpath,
 	     disk->pentry_arr_size, old_crc, disk->pentry_arr_crc);
 
 	// DumpHex(disk->pentry_arr, disk->pentry_arr_size);
 
 	// Recalculate the CRC of the backup partition array
-	disk->pentry_arr_bak_crc = crc32(0, disk->pentry_arr_bak, disk->pentry_arr_size);
+	disk->pentry_arr_bak_crc = efi_crc32(disk->pentry_arr_bak, disk->pentry_arr_size);
+	LOGD("%s() disk %8s GPT pentry_bak len %u crc: %08x -> %08x\n", __func__, disk->devpath,
+	     disk->pentry_arr_size, old_crc, disk->pentry_arr_crc);
 
 	// Update the partition CRC value in the primary GPT header
 	PUT_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET, disk->pentry_arr_crc);
@@ -720,8 +724,8 @@ static int gpt_disk_update_crc(struct gpt_disk *disk)
 	// Header CRC is calculated with its own CRC field set to 0
 	PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, 0);
 	PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, 0);
-	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
-	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
+	disk->hdr_crc = efi_crc32(disk->hdr, gpt_header_size);
+	disk->hdr_bak_crc = efi_crc32(disk->hdr_bak, gpt_header_size);
 	PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, disk->hdr_crc);
 	PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, disk->hdr_bak_crc);
 	return 0;
@@ -776,9 +780,13 @@ int gpt_disk_commit(struct gpt_disk *disk)
 		fprintf(stderr, "%s: Failed to write backup GPT partition arr\n", __func__);
 		goto error;
 	}
+
+	LOGD("%s: Done\n", __func__);
+
 	fsync(fd);
 	close(fd);
 	return 0;
+
 error:
 	if (fd >= 0)
 		close(fd);
@@ -793,7 +801,7 @@ error:
 // program should exit (e.g. by failing) before making any changes.
 bool gpt_utils_is_partition_backed_by_emmc(const char *part)
 {
-	char devpath[PATH_MAX] = { '\0' };
+	char devpath[GPT_PTN_PATH_MAX] = { '\0' };
 
 	if (get_dev_path_from_partition_name(part, devpath, sizeof(devpath)))
 		return false;

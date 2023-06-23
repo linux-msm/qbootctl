@@ -639,7 +639,8 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
 	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
 	// FIXME: pointer offsets crc bleh
 	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
-	disk->hdr_bak = gpt_get_header(dev, PRIMARY_GPT);
+
+	disk->hdr_bak = gpt_get_header(dev, SECONDARY_GPT);
 	if (!disk->hdr_bak) {
 		fprintf(stderr, "%s: Failed to get backup header\n", __func__);
 		goto error;

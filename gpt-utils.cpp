@@ -440,24 +440,6 @@ static int gpt_set_header(uint8_t *gpt_header, int fd,
 	return 0;
 }
 
-struct file {
-	int fd = -1;
-
-	~file()
-	{
-		if (fd > -1) {
-			fsync(fd);
-			close(fd);
-		}
-	}
-
-	int open(const char *path)
-	{
-		fd = ::open(path, O_RDWR);
-		return fd;
-	}
-};
-
 //Read out the GPT header for the disk that contains the partition partname
 static bool gpt_get_header(const char *partname, enum gpt_instance instance,
 			   std::vector<uint8_t> *hdr)
@@ -465,7 +447,7 @@ static bool gpt_get_header(const char *partname, enum gpt_instance instance,
 	char devpath[PATH_MAX] = { 0 };
 	off_t hdr_offset = 0;
 	uint32_t block_size = 0;
-	file file;
+	int fd;
 	if (!partname) {
 		fprintf(stderr, "%s: Invalid partition name\n", __func__);
 		return false;
@@ -478,16 +460,19 @@ static bool gpt_get_header(const char *partname, enum gpt_instance instance,
 		return false;
 	}
 
-	if (file.open(devpath) < 0) {
+	fd = open(devpath, O_RDONLY);
+	if (fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__,
 			devpath, strerror(errno));
+		close(fd);
 		return false;
 	}
 
-	block_size = gpt_get_block_size(file.fd);
+	block_size = gpt_get_block_size(fd);
 	if (block_size == 0) {
 		fprintf(stderr, "%s: Failed to get gpt block size for %s\n",
 			__func__, partname);
+		close(fd);
 		return false;
 	}
 
@@ -496,19 +481,23 @@ static bool gpt_get_header(const char *partname, enum gpt_instance instance,
 	if (instance == PRIMARY_GPT)
 		hdr_offset = block_size;
 	else
-		hdr_offset = lseek64(file.fd, 0, SEEK_END) - block_size;
+		hdr_offset = lseek64(fd, 0, SEEK_END) - block_size;
 
 	if (hdr_offset < 0) {
 		fprintf(stderr, "%s: Failed to get gpt header offset\n",
 			__func__);
+		close(fd);
 		return false;
 	}
 
-	if (blk_rw(file.fd, 0, hdr_offset, hdr->data(), block_size)) {
+	if (blk_rw(fd, 0, hdr_offset, hdr->data(), block_size)) {
 		fprintf(stderr, "%s: Failed to read GPT header from device\n",
 			__func__);
+		close(fd);
 		return false;
 	}
+
+	close(fd);
 
 	return true;
 }
@@ -596,8 +585,8 @@ static int gpt_set_pentry_arr(uint8_t *hdr, int fd, uint8_t *arr)
 //disk represented by path dev. Returns 0 on success and -1 on error.
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 {
-	file file;
 	uint32_t gpt_header_size = 0;
+	int fd;
 
 	if (!disk || !dev) {
 		fprintf(stderr, "%s: Invalid arguments\n", __func__);
@@ -630,25 +619,28 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		return -1;
 	}
 
-	if (file.open(disk->devpath) < 0) {
+	fd = open(disk->devpath, O_RDONLY);
+	if (fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__,
 			disk->devpath, strerror(errno));
 		return -1;
 	}
 
-	gpt_get_pentry_arr(disk->hdr.data(), file.fd, &disk->pentry_arr);
+	gpt_get_pentry_arr(disk->hdr.data(), fd, &disk->pentry_arr);
 	if (disk->pentry_arr.empty()) {
 		fprintf(stderr, "%s: Failed to obtain partition entry array\n",
 			__func__);
+		close(fd);
 		return -1;
 	}
 
-	gpt_get_pentry_arr(disk->hdr_bak.data(), file.fd,
+	gpt_get_pentry_arr(disk->hdr_bak.data(), fd,
 			   &disk->pentry_arr_bak);
 	if (disk->pentry_arr_bak.empty()) {
 		fprintf(stderr,
 			"%s: Failed to obtain backup partition entry array\n",
 			__func__);
+		close(fd);
 		return -1;
 	}
 
@@ -660,8 +652,11 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		GET_4_BYTES(disk->hdr.data() + PARTITION_CRC_OFFSET);
 	disk->pentry_arr_bak_crc =
 		GET_4_BYTES(disk->hdr_bak.data() + PARTITION_CRC_OFFSET);
-	disk->block_size = gpt_get_block_size(file.fd);
+	disk->block_size = gpt_get_block_size(fd);
 	disk->is_initialized = GPT_DISK_INIT_MAGIC;
+
+	close(fd);
+
 	return 0;
 }
 
@@ -722,13 +717,15 @@ int gpt_disk_update_crc(struct gpt_disk *disk)
 //Write the contents of struct gpt_disk back to the actual disk
 int gpt_disk_commit(struct gpt_disk *disk)
 {
-	file file;
+	int fd;
+
 	if (!disk || (disk->is_initialized != GPT_DISK_INIT_MAGIC)) {
 		fprintf(stderr, "%s: Invalid args\n", __func__);
 		return -1;
 	}
 
-	if (file.open(disk->devpath) < 0) {
+	fd = open(disk->devpath, O_RDWR);
+	if (fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__,
 			disk->devpath, strerror(errno));
 		return -1;
@@ -736,21 +733,25 @@ int gpt_disk_commit(struct gpt_disk *disk)
 
 	LOGD("%s: Writing back primary GPT header\n", __func__);
 	//Write the primary header
-	if (gpt_set_header(disk->hdr.data(), file.fd, PRIMARY_GPT) != 0) {
+	if (gpt_set_header(disk->hdr.data(), fd, PRIMARY_GPT) != 0) {
 		fprintf(stderr, "%s: Failed to update primary GPT header\n",
 			__func__);
+		close(fd);
 		return -1;
 	}
 
 	LOGD("%s: Writing back primary partition array\n", __func__);
 	//Write back the primary partition array
-	if (gpt_set_pentry_arr(disk->hdr.data(), file.fd,
+	if (gpt_set_pentry_arr(disk->hdr.data(), fd,
 			       disk->pentry_arr.data())) {
 		fprintf(stderr,
 			"%s: Failed to write primary GPT partition arr\n",
 			__func__);
+		close(fd);
 		return -1;
 	}
+
+	close(fd);
 
 	return 0;
 }

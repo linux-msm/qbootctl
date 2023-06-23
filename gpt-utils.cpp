@@ -774,6 +774,21 @@ int gpt_disk_commit(struct gpt_disk *disk)
 			__func__);
 		goto error;
 	}
+
+	// Write the backup header
+	if (gpt_set_header(disk->hdr_bak, fd, SECONDARY_GPT) != 0) {
+		fprintf(stderr, "%s: Failed to update backup GPT header\n",
+			__func__);
+		goto error;
+	}
+	LOGD("%s: Writing back backup partition array\n", __func__);
+	// Write back the backup partition array
+	if (gpt_set_pentry_arr(disk->hdr_bak, fd, disk->pentry_arr_bak)) {
+		fprintf(stderr,
+			"%s: Failed to write backup GPT partition arr\n",
+			__func__);
+		goto error;
+	}
 	fsync(fd);
 	close(fd);
 	return 0;

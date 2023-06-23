@@ -96,32 +96,36 @@ enum boot_chain { NORMAL_BOOT = 0, BACKUP_BOOT };
 
 struct gpt_disk {
 	//GPT primary header
-	std::vector<uint8_t> hdr;
+	uint8_t *hdr;
 	//primary header crc
-	uint32_t hdr_crc = 0;
+	uint32_t hdr_crc;
 	//GPT backup header
-	std::vector<uint8_t> hdr_bak;
+	uint8_t *hdr_bak;
 	//backup header crc
-	uint32_t hdr_bak_crc = 0;
+	uint32_t hdr_bak_crc;
 	//Partition entries array
-	std::vector<uint8_t> pentry_arr;
+	uint8_t *pentry_arr;
 	//Partition entries array for backup table
-	std::vector<uint8_t> pentry_arr_bak;
+	uint8_t *pentry_arr_bak;
 	//Size of the pentry array
-	uint32_t pentry_arr_size = 0;
+	uint32_t pentry_arr_size;
 	//Size of each element in the pentry array
-	uint32_t pentry_size = 0;
+	uint32_t pentry_size;
 	//CRC of the partition entry array
-	uint32_t pentry_arr_crc = 0;
+	uint32_t pentry_arr_crc;
 	//CRC of the backup partition entry array
-	uint32_t pentry_arr_bak_crc = 0;
+	uint32_t pentry_arr_bak_crc;
 	//Path to block dev representing the disk
-	char devpath[PATH_MAX] = { 0 };
+	char devpath[PATH_MAX];
 	//Block size of disk
-	uint32_t block_size = 0;
-	uint32_t is_initialized = 0;
+	uint32_t block_size;
+	uint32_t is_initialized;
 };
 
+//GPT disk methods
+struct gpt_disk *gpt_disk_alloc();
+//Free previously allocated gpt_disk struct
+void gpt_disk_free(struct gpt_disk *disk);
 //Get the details of the disk holding the partition whose name
 //is passed in via dev
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);

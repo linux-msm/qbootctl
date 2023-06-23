@@ -48,41 +48,32 @@
 /* UFS BSG device node */
 static char ufs_bsg_dev[FNAME_SZ] = "/dev/bsg/ufs-bsg0";
 
-struct fd_ufs_bsg {
-	int fd = 0;
-
-	~fd_ufs_bsg()
-	{
-		close();
-	}
-
-	void close()
-	{
-		if (fd > 0) {
-			::close(fd);
-			fd = 0;
-		}
-	}
-};
-
-static fd_ufs_bsg fd_ufs_bsg;
+static int fd_ufs_bsg = 0;
 
 int ufs_bsg_dev_open()
 {
-	if (fd_ufs_bsg.fd)
+	if (fd_ufs_bsg)
 		return 0;
 
-	fd_ufs_bsg.fd = open(ufs_bsg_dev, O_RDWR);
-	if (fd_ufs_bsg.fd < 0) {
+	fd_ufs_bsg = open(ufs_bsg_dev, O_RDWR);
+	if (fd_ufs_bsg < 0) {
 		fprintf(stderr, "Unable to open '%s': %s\n", ufs_bsg_dev,
 			strerror(errno));
 		fprintf(stderr,
 			"Is CONFIG_SCSI_UFS_BSG is enabled in your kernel?\n");
-		fd_ufs_bsg.fd = 0;
+		fd_ufs_bsg = 0;
 		return -1;
 	}
 
 	return 0;
+}
+
+void ufs_bsg_dev_close()
+{
+	if (fd_ufs_bsg) {
+		close(fd_ufs_bsg);
+		fd_ufs_bsg = 0;
+	}
 }
 
 static int ufs_bsg_ioctl(int fd, struct ufs_bsg_request *req,
@@ -180,18 +171,18 @@ int32_t set_boot_lun(__u8 lun_id)
 	ret = ufs_bsg_dev_open();
 	if (ret)
 		return ret;
-
 	LOGD("Opened ufs bsg dev: %s\n", ufs_bsg_dev);
 
-	ret = ufs_query_attr(fd_ufs_bsg.fd, boot_lun_id,
-			     QUERY_REQ_FUNC_STD_WRITE, QUERY_REQ_OP_WRITE_ATTR,
-			     QUERY_ATTR_IDN_BOOT_LU_EN, 0, 0);
+	ret = ufs_query_attr(fd_ufs_bsg, boot_lun_id, QUERY_REQ_FUNC_STD_WRITE,
+			     QUERY_REQ_OP_WRITE_ATTR, QUERY_ATTR_IDN_BOOT_LU_EN,
+			     0, 0);
 	if (ret) {
 		fprintf(stderr,
 			"Error requesting ufs attr idn %d via query ioctl (return value: %d, error no: %d)",
 			QUERY_ATTR_IDN_BOOT_LU_EN, ret, errno);
+		goto out;
 	}
-
-	fd_ufs_bsg.close();
+out:
+	ufs_bsg_dev_close();
 	return ret;
 }

@@ -15,17 +15,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <map>
-#include <list>
-#include <string>
-#include <vector>
 #include <errno.h>
-#include <regex>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <cstdint>
+#include <stdint.h>
 
 #include "bootctrl.h"
 
@@ -107,7 +102,7 @@ int get_slot_info(struct slot_info *slots)
 
 	slots[active_slot].active = true;
 
-	for (size_t i = 0; i < 2; i++) {
+	for (int i = 0; i < 2; i++) {
 		rc = impl->isSlotMarkedSuccessful(i);
 		if (rc < 0)
 			return rc;
@@ -130,7 +125,7 @@ void dump_info()
 
 	printf("Current slot: %s\n",
 	       current_slot >= 0 ? impl->getSuffix(current_slot) : "N/A");
-	for (size_t i = 0; i < 2; i++) {
+	for (int i = 0; i < 2; i++) {
 		printf("SLOT %s:\n", impl->getSuffix(i));
 		printf("\tActive      : %d\n", slots[i].active);
 		printf("\tSuccessful  : %d\n", slots[i].successful);

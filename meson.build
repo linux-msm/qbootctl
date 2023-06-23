@@ -1,8 +1,14 @@
-project('qbootctl', 'cpp')
+project('qbootctl', 'cpp', default_options : ['c_std=c11', 'cpp_std=c++17'])
+
+cc = meson.get_compiler('cpp')
 
 deps = [
         dependency('zlib'),
 ]
+
+if not cc.has_header('linux/bsg.h')
+        error('linux-headers not found')
+endif
 
 src = [
         'qbootctl.cpp',

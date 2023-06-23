@@ -123,19 +123,18 @@ struct gpt_disk {
 };
 
 //GPT disk methods
-struct gpt_disk *gpt_disk_alloc();
+bool gpt_disk_is_valid(struct gpt_disk *disk);
 //Free previously allocated gpt_disk struct
 void gpt_disk_free(struct gpt_disk *disk);
 //Get the details of the disk holding the partition whose name
 //is passed in via dev
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);
 
+bool partition_is_for_disk(const char *part, struct gpt_disk *disk, char *blockdev, int blockdev_len);
+
 //Get pointer to partition entry from a allocated gpt_disk structure
 uint8_t *gpt_disk_get_pentry(struct gpt_disk *disk, const char *partname,
 			     enum gpt_instance instance);
-
-//Update the crc fields of the modified disk structure
-int gpt_disk_update_crc(struct gpt_disk *disk);
 
 //Write the contents of struct gpt_disk back to the actual disk
 int gpt_disk_commit(struct gpt_disk *disk);

@@ -54,7 +54,7 @@ BreakConstructorInitializersBeforeComma: false
 #BreakConstructorInitializers: BeforeComma # Unknown to clang-format-4.0
 BreakAfterJavaFieldAnnotations: false
 BreakStringLiterals: false
-ColumnLimit: 80
+ColumnLimit: 100
 CommentPragmas: '^ IWYU pragma:'
 #CompactNamespaces: false # Unknown to clang-format-4.0
 ConstructorInitializerAllOnOneLineOrOnePerLine: false
@@ -89,16 +89,16 @@ ObjCSpaceBeforeProtocolList: true
 
 # Taken from git's rules
 #PenaltyBreakAssignment: 10 # Unknown to clang-format-4.0
-PenaltyBreakBeforeFirstCallParameter: 30
+PenaltyBreakBeforeFirstCallParameter: 50
 PenaltyBreakComment: 10
 PenaltyBreakFirstLessLess: 0
 PenaltyBreakString: 10
-PenaltyExcessCharacter: 100
+PenaltyExcessCharacter: 30
 PenaltyReturnTypeOnItsOwnLine: 60
 
 PointerAlignment: Right
 ReflowComments: false
-SortIncludes: false
+SortIncludes: true
 #SortUsingDeclarations: false # Unknown to clang-format-4.0
 SpaceAfterCStyleCast: false
 SpaceAfterTemplateKeyword: true
@@ -114,7 +114,7 @@ SpacesInContainerLiterals: false
 SpacesInCStyleCastParentheses: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
-Standard: Cpp03
+Standard: Cpp11
 TabWidth: 8
 UseTab: Always
 ...

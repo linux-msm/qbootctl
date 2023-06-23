@@ -1,6 +1,6 @@
-project('qbootctl', 'cpp', default_options : ['c_std=c11', 'cpp_std=c++17'])
+project('qbootctl', 'c', default_options : ['c_std=c11'])
 
-cc = meson.get_compiler('cpp')
+cc = meson.get_compiler('c')
 
 deps = [
         dependency('zlib'),
@@ -11,11 +11,11 @@ if not cc.has_header('linux/bsg.h')
 endif
 
 src = [
-        'qbootctl.cpp',
-        'bootctrl_impl.cpp',
-        'bootctrl_test.cpp',
-        'gpt-utils.cpp',
-        'ufs-bsg.cpp',
+        'qbootctl.c',
+        'bootctrl_impl.c',
+        'bootctrl_test.c',
+        'gpt-utils.c',
+        'ufs-bsg.c',
 ]
 
 inc = [

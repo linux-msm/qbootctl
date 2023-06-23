@@ -29,13 +29,11 @@
 
 #ifndef __GPT_UTILS_H__
 #define __GPT_UTILS_H__
-#include <vector>
-#include <string>
-#include <map>
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include <unistd.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <linux/limits.h>
@@ -62,8 +60,8 @@ extern "C" {
 #define PARTITION_NAME_OFFSET	56
 #define MAX_GPT_NAME_SIZE	72
 
-//Bit 48 onwords in the attribute field are the ones where we are allowed to
-//store our AB attributes.
+// Bit 48 onwords in the attribute field are the ones where we are allowed to
+// store our AB attributes.
 #define AB_FLAG_OFFSET			  (ATTRIBUTE_FLAG_OFFSET + 6)
 #define GPT_DISK_INIT_MAGIC		  0xABCD
 #define AB_PARTITION_ATTR_SLOT_ACTIVE	  (0x1 << 2)
@@ -76,14 +74,22 @@ extern "C" {
 #define AB_SLOT_A_SUFFIX		  "_a"
 #define AB_SLOT_B_SUFFIX		  "_b"
 #define PTN_XBL				  "xbl"
-#define PTN_SWAP_LIST                                                          \
-	PTN_XBL, "abl", "aop", "apdp", "cmnlib", "cmnlib64", "devcfg", "dtbo", \
-		"hyp", "keymaster", "msadp", "qupfw", "storsec", "tz",         \
-		"vbmeta", "vbmeta_system", "xbl_config"
+// XBL is not included because the slot attributes are meaningless there
+// *which* XBL partition is active is determined via the UFS bBootLunEn field
+// as it needs to be handled by PBL
+#define PTN_SWAP_LIST \
+	"abl_a", "aop_a", "apdp_a", "cmnlib_a", "cmnlib64_a", "devcfg_a", "dtbo_a", \
+	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
+	"vbmeta_a", "vbmeta_system_a"
 
-#define AB_PTN_LIST                                                            \
-	PTN_SWAP_LIST, "boot", "system", "vendor", "modem", "system_ext",      \
-		"product"
+static const char g_all_ptns[][MAX_GPT_NAME_SIZE] = {
+	PTN_SWAP_LIST, "boot_a", "system",
+	"vendor_a", "modem_a", "system_ext_a", "product_a"
+};
+
+// No more than /dev/sdk
+#define MAX_BLOCK_DEVICES 10
+
 #define BOOT_DEV_DIR  "/dev/disk/by-partlabel"
 
 #define EMMC_DEVICE "/dev/mmcblk0"
@@ -95,77 +101,68 @@ enum gpt_instance { PRIMARY_GPT = 0, SECONDARY_GPT };
 enum boot_chain { NORMAL_BOOT = 0, BACKUP_BOOT };
 
 struct gpt_disk {
-	//GPT primary header
+	// GPT primary header
 	uint8_t *hdr;
-	//primary header crc
+	// primary header crc
 	uint32_t hdr_crc;
-	//GPT backup header
+	// GPT backup header
 	uint8_t *hdr_bak;
-	//backup header crc
+	// backup header crc
 	uint32_t hdr_bak_crc;
-	//Partition entries array
+	// Partition entries array
 	uint8_t *pentry_arr;
-	//Partition entries array for backup table
+	// Partition entries array for backup table
 	uint8_t *pentry_arr_bak;
-	//Size of the pentry array
+	// Size of the pentry array
 	uint32_t pentry_arr_size;
-	//Size of each element in the pentry array
+	// Size of each element in the pentry array
 	uint32_t pentry_size;
-	//CRC of the partition entry array
+	// CRC of the partition entry array
 	uint32_t pentry_arr_crc;
-	//CRC of the backup partition entry array
+	// CRC of the backup partition entry array
 	uint32_t pentry_arr_bak_crc;
-	//Path to block dev representing the disk
+	// Path to block dev representing the disk
 	char devpath[PATH_MAX];
-	//Block size of disk
+	// Block size of disk
 	uint32_t block_size;
 	uint32_t is_initialized;
 };
 
-//GPT disk methods
+// GPT disk methods
 bool gpt_disk_is_valid(struct gpt_disk *disk);
-//Free previously allocated gpt_disk struct
+// Free previously allocated gpt_disk struct
 void gpt_disk_free(struct gpt_disk *disk);
-//Get the details of the disk holding the partition whose name
-//is passed in via dev
+// Get the details of the disk holding the partition whose name
+// is passed in via dev
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);
 
-bool partition_is_for_disk(const char *part, struct gpt_disk *disk, char *blockdev, int blockdev_len);
+int partition_is_for_disk(const struct gpt_disk *disk, const char *part, char *blockdev, int blockdev_len);
 
-//Get pointer to partition entry from a allocated gpt_disk structure
+// Get pointer to partition entry from a allocated gpt_disk structure
 uint8_t *gpt_disk_get_pentry(struct gpt_disk *disk, const char *partname,
 			     enum gpt_instance instance);
 
-//Write the contents of struct gpt_disk back to the actual disk
+// Write the contents of struct gpt_disk back to the actual disk
 int gpt_disk_commit(struct gpt_disk *disk);
 
-//Swtich betwieen using either the primary or the backup
-//boot LUN for boot. This is required since UFS boot partitions
-//cannot have a backup GPT which is what we use for failsafe
-//updates of the other 'critical' partitions. This function will
-//not be invoked for emmc targets and on UFS targets is only required
-//to be invoked for XBL.
+// Swtich betwieen using either the primary or the backup
+// boot LUN for boot. This is required since UFS boot partitions
+// cannot have a backup GPT which is what we use for failsafe
+// updates of the other 'critical' partitions. This function will
+// not be invoked for emmc targets and on UFS targets is only required
+// to be invoked for XBL.
 //
-//The algorithm to do this is as follows:
-//- Find the real block device(eg: /dev/block/sdb) that corresponds
+// The algorithm to do this is as follows:
+// - Find the real block device(eg: /dev/block/sdb) that corresponds
 //  to the /dev/block/bootdevice/by-name/xbl(bak) symlink
 //
-//- Once we have the block device 'node' name(sdb in the above example)
+// - Once we have the block device 'node' name(sdb in the above example)
 //  use this node to to locate the scsi generic device that represents
 //  it by checking the file /sys/block/sdb/device/scsi_generic/sgY
 //
-//- Once we locate sgY we call the query ioctl on /dev/sgy to switch
-//the boot lun to either LUNA or LUNB
+// - Once we locate sgY we call the query ioctl on /dev/sgy to switch
+// the boot lun to either LUNA or LUNB
 int gpt_utils_set_xbl_boot_partition(enum boot_chain chain);
-
-//Given a vector of partition names as a input and a reference to a map,
-//populate the map to indicate which physical disk each of the partitions
-//sits on. The key in the map is the path to the block device where the
-//partition lies and the value is a vector of strings indicating which of
-//the passed in partition names sits on that device.
-int gpt_utils_get_partition_map(
-	std::vector<std::string> &partition_list,
-	std::map<std::string, std::vector<std::string> > &partition_map);
 
 bool gpt_utils_is_partition_backed_by_emmc(const char *part);
 #ifdef __cplusplus

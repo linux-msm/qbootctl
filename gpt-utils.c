@@ -30,8 +30,10 @@
 
 #define _LARGEFILE64_SOURCE /* enable lseek64() */
 
-#include "assert.h"
+#include <assert.h>
 #include <asm/byteorder.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include <dirent.h>
 #include <endian.h>
 #include <errno.h>
@@ -40,14 +42,11 @@
 #include <limits.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
-#include <map>
 #include <stdio.h>
 #include <string.h>
-#include <string>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <vector>
 #include <zlib.h>
 
 #include "gpt-utils.h"
@@ -75,9 +74,6 @@
 #define LUN_NAME_START_LOC (sizeof("/dev/") - 1)
 #define BOOT_LUN_A_ID	   1
 #define BOOT_LUN_B_ID	   2
-/******************************************************************************
- * MACROS
- ******************************************************************************/
 
 #define GET_4_BYTES(ptr)                                                                           \
 	((uint32_t) * ((uint8_t *)(ptr)) | ((uint32_t) * ((uint8_t *)(ptr) + 1) << 8) |            \
@@ -97,10 +93,6 @@
 	*((uint8_t *)(ptr) + 2) = ((y) >> 16) & 0xff;                                              \
 	*((uint8_t *)(ptr) + 3) = ((y) >> 24) & 0xff;
 
-/******************************************************************************
- * TYPES
- ******************************************************************************/
-using namespace std;
 enum gpt_state { GPT_OK = 0, GPT_BAD_SIGNATURE, GPT_BAD_CRC };
 // List of LUN's containing boot critical images.
 // Required in the case of UFS devices
@@ -109,9 +101,6 @@ struct update_data {
 	uint32_t num_valid_entries;
 };
 
-/******************************************************************************
- * FUNCTIONS
- ******************************************************************************/
 void DumpHex(const void *data, size_t size)
 {
 	char ascii[17];
@@ -222,7 +211,7 @@ static uint8_t *gpt_pentry_seek(const char *ptn_name, const uint8_t *pentries_st
 				return (uint8_t *)(pentry_name - PARTITION_NAME_OFFSET);
 	}
 
-	return nullptr;
+	return NULL;
 }
 
 // Defined in ufs-bsg.cpp
@@ -249,7 +238,7 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 {
 	struct stat st;
 	uint8_t boot_lun_id = 0;
-	const char *boot_dev = nullptr;
+	const char *boot_dev = NULL;
 
 	(void)st;
 	(void)boot_dev;
@@ -332,42 +321,6 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf, siz
 	return 0;
 }
 
-int gpt_utils_get_partition_map(vector<string> &ptn_list, map<string, vector<string>> &partition_map)
-{
-	char devpath[PATH_MAX] = { '\0' };
-	map<string, vector<string>>::iterator it;
-
-	if (ptn_list.size() < 1) {
-		fprintf(stderr, "%s: Invalid ptn list\n", __func__);
-		return -1;
-	}
-
-	// Go through the passed in list
-	for (uint32_t i = 0; i < ptn_list.size(); i++) {
-		// Key in the map is the path to the device that holds the
-		// partition
-		if (get_dev_path_from_partition_name(ptn_list[i].c_str(), devpath, sizeof(devpath))) {
-			// Not necessarily an error. The partition may just
-			// not be present.
-			continue;
-		}
-
-		string path = devpath;
-		it = partition_map.find(path);
-		if (it != partition_map.end()) {
-			it->second.push_back(ptn_list[i]);
-		} else {
-			vector<string> str_vec;
-			str_vec.push_back(ptn_list[i]);
-			partition_map.insert(pair<string, vector<string>>(path, str_vec));
-		}
-	
-		memset(devpath, '\0', sizeof(devpath));
-	}
-
-	return 0;
-}
-
 // Get the block size of the disk represented by decsriptor fd
 static uint32_t gpt_get_block_size(int fd)
 {
@@ -432,7 +385,7 @@ error:
 // Read out the GPT headers for the disk that contains the partition partname
 static int gpt_get_headers(const char *partname, uint8_t **primary, uint8_t **backup)
 {
-	uint8_t *hdr = nullptr;
+	uint8_t *hdr = NULL;
 	char devpath[PATH_MAX] = { 0 };
 	off_t hdr_offset = 0;
 	uint32_t block_size = 0;
@@ -505,7 +458,7 @@ static uint8_t *gpt_get_pentry_arr(uint8_t *hdr, int fd)
 	uint32_t pentry_size = 0;
 	uint32_t block_size = 0;
 	uint32_t pentries_arr_size = 0;
-	uint8_t *pentry_arr = nullptr;
+	uint8_t *pentry_arr = NULL;
 	int rc = 0;
 	if (!hdr) {
 		fprintf(stderr, "%s: Invalid header\n", __func__);
@@ -537,7 +490,7 @@ static uint8_t *gpt_get_pentry_arr(uint8_t *hdr, int fd)
 error:
 	if (pentry_arr)
 		free(pentry_arr);
-	return nullptr;
+	return NULL;
 }
 
 static int gpt_set_pentry_arr(uint8_t *hdr, int fd, uint8_t *arr)
@@ -586,19 +539,19 @@ void gpt_disk_free(struct gpt_disk *disk)
 
 	if (disk->hdr) {
 		free(disk->hdr);
-		disk->hdr = nullptr;
+		disk->hdr = NULL;
 	}
 	if (disk->hdr_bak) {
 		free(disk->hdr_bak);
-		disk->hdr_bak = nullptr;
+		disk->hdr_bak = NULL;
 	}
 	if (disk->pentry_arr) {
 		free(disk->pentry_arr);
-		disk->pentry_arr = nullptr;
+		disk->pentry_arr = NULL;
 	}
 	if (disk->pentry_arr_bak) {
 		free(disk->pentry_arr_bak);
-		disk->pentry_arr_bak = nullptr;
+		disk->pentry_arr_bak = NULL;
 	}
 
 	disk->is_initialized = 0;
@@ -616,14 +569,14 @@ bool gpt_disk_is_valid(struct gpt_disk *disk)
  * and populate the blockdev path.
  * e.g. for /dev/disk/by-partlabel/system_a blockdev would be /dev/sda
  */
-bool partition_is_for_disk(const char *part, struct gpt_disk *disk, char *blockdev, int blockdev_len)
+int partition_is_for_disk(const struct gpt_disk *disk, const char *part, char *blockdev, int blockdev_len)
 {
 	int ret;
 
 	ret = get_dev_path_from_partition_name(part, blockdev, blockdev_len);
 	if (ret) {
 		fprintf(stderr, "%s: Failed to resolve path for %s\n", __func__, part);
-		return false;
+		return -1;
 	}
 
 	if (!strcmp(blockdev, disk->devpath)) {
@@ -639,7 +592,7 @@ bool partition_is_for_disk(const char *part, struct gpt_disk *disk, char *blockd
  */
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 {
-	int fd = -1;
+	int fd = -1, rc;
 	uint32_t gpt_header_size = 0;
 	char devpath[PATH_MAX] = { 0 };
 
@@ -648,8 +601,14 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		goto error;
 	}
 
-	if (partition_is_for_disk(dev, disk, devpath, sizeof(devpath))) {
+	rc = partition_is_for_disk(disk, dev, devpath, sizeof(devpath));
+
+	if (rc > 0)
 		return 0;
+
+	if (rc < 0) {
+		fprintf(stderr, "%s: Failed to resolve path for %s\n", __func__, dev);
+		return -1;
 	}
 
 	if (disk->is_initialized == GPT_DISK_INIT_MAGIC) {
@@ -666,8 +625,8 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		goto error;
 	}
 
-	assert(disk->hdr != nullptr);
-	assert(disk->hdr_bak != nullptr);
+	assert(disk->hdr != NULL);
+	assert(disk->hdr_bak != NULL);
 
 	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
 
@@ -683,14 +642,14 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		goto error;
 	}
 
-	assert(disk->pentry_arr == nullptr);
+	assert(disk->pentry_arr == NULL);
 	disk->pentry_arr = gpt_get_pentry_arr(disk->hdr, fd);
 	if (!disk->pentry_arr) {
 		fprintf(stderr, "%s: Failed to obtain partition entry array\n", __func__);
 		goto error;
 	}
 
-	assert(disk->pentry_arr_bak == nullptr);
+	assert(disk->pentry_arr_bak == NULL);
 	disk->pentry_arr_bak = gpt_get_pentry_arr(disk->hdr_bak, fd);
 	if (!disk->pentry_arr_bak) {
 		fprintf(stderr, "%s: Failed to obtain backup partition entry array\n", __func__);
@@ -714,10 +673,10 @@ error:
 // Get pointer to partition entry from a allocated gpt_disk structure
 uint8_t *gpt_disk_get_pentry(struct gpt_disk *disk, const char *partname, enum gpt_instance instance)
 {
-	uint8_t *ptn_arr = nullptr;
+	uint8_t *ptn_arr = NULL;
 	if (!disk || !partname || disk->is_initialized != GPT_DISK_INIT_MAGIC) {
 		fprintf(stderr, "%s: disk handle not initialised\n", __func__);
-		return nullptr;
+		return NULL;
 	}
 	ptn_arr = (instance == PRIMARY_GPT) ? disk->pentry_arr : disk->pentry_arr_bak;
 	return (gpt_pentry_seek(partname, ptn_arr, ptn_arr + disk->pentry_arr_size,

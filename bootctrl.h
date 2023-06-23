@@ -19,85 +19,86 @@
 #ifndef __BOOTCTRL_H__
 #define __BOOTCTRL_H__
 
+#include <stdbool.h>
+
 struct slot_info {
 	bool active;
 	bool bootable;
-        bool successful;
+	bool successful;
 };
 
 struct boot_control_module {
+	/*
+	* (*getCurrentSlot)() returns the value letting the system know
+	* whether the current slot is A or B. The meaning of A and B is
+	* left up to the implementer. It is assumed that if the current slot
+	* is A, then the block devices underlying B can be accessed directly
+	* without any risk of corruption.
+	* The returned value is always guaranteed to be strictly less than the
+	* value returned by getNumberSlots. Slots start at 0 and
+	* finish at getNumberSlots() - 1
+	*/
+	unsigned (*getCurrentSlot)();
 
-    /*
-     * (*getCurrentSlot)() returns the value letting the system know
-     * whether the current slot is A or B. The meaning of A and B is
-     * left up to the implementer. It is assumed that if the current slot
-     * is A, then the block devices underlying B can be accessed directly
-     * without any risk of corruption.
-     * The returned value is always guaranteed to be strictly less than the
-     * value returned by getNumberSlots. Slots start at 0 and
-     * finish at getNumberSlots() - 1
-     */
-    unsigned (*getCurrentSlot)();
+	/*
+	* (*markBootSuccessful)() marks the specified slot
+	* as boot successful
+	*
+	* Returns 0 on success, -errno on error.
+	*/
+	int (*markBootSuccessful)(unsigned slot);
 
-    /*
-     * (*markBootSuccessful)() marks the specified slot
-     * as boot successful
-     *
-     * Returns 0 on success, -errno on error.
-     */
-    int (*markBootSuccessful)(unsigned slot);
+	/*
+	* (*setActiveBootSlot)() marks the slot passed in parameter as
+	* the active boot slot (see getCurrentSlot for an explanation
+	* of the "slot" parameter). This overrides any previous call to
+	* setSlotAsUnbootable.
+	* Returns 0 on success, -errno on error.
+	*/
+	int (*setActiveBootSlot)(unsigned slot);
 
-    /*
-     * (*setActiveBootSlot)() marks the slot passed in parameter as
-     * the active boot slot (see getCurrentSlot for an explanation
-     * of the "slot" parameter). This overrides any previous call to
-     * setSlotAsUnbootable.
-     * Returns 0 on success, -errno on error.
-     */
-    int (*setActiveBootSlot)(unsigned slot);
+	/*
+	* (*setSlotAsUnbootable)() marks the slot passed in parameter as
+	* an unbootable. This can be used while updating the contents of the slot's
+	* partitions, so that the system will not attempt to boot a known bad set up.
+	* Returns 0 on success, -errno on error.
+	*/
+	int (*setSlotAsUnbootable)(unsigned slot);
 
-    /*
-     * (*setSlotAsUnbootable)() marks the slot passed in parameter as
-     * an unbootable. This can be used while updating the contents of the slot's
-     * partitions, so that the system will not attempt to boot a known bad set up.
-     * Returns 0 on success, -errno on error.
-     */
-    int (*setSlotAsUnbootable)(unsigned slot);
+	/*
+	* (*isSlotBootable)() returns if the slot passed in parameter is
+	* bootable. Note that slots can be made unbootable by both the
+	* bootloader and by the OS using setSlotAsUnbootable.
+	* Returns 1 if the slot is bootable, 0 if it's not, and -errno on
+	* error.
+	*/
+	int (*isSlotBootable)(unsigned slot);
 
-    /*
-     * (*isSlotBootable)() returns if the slot passed in parameter is
-     * bootable. Note that slots can be made unbootable by both the
-     * bootloader and by the OS using setSlotAsUnbootable.
-     * Returns 1 if the slot is bootable, 0 if it's not, and -errno on
-     * error.
-     */
-    int (*isSlotBootable)(unsigned slot);
+	/*
+	* (*getSuffix)() returns the string suffix used by partitions that
+	* correspond to the slot number passed in parameter. The returned string
+	* is expected to be statically allocated and not need to be freed.
+	* Returns NULL if slot does not match an existing slot.
+	*/
+	const char *(*getSuffix)(unsigned slot);
 
-    /*
-     * (*getSuffix)() returns the string suffix used by partitions that
-     * correspond to the slot number passed in parameter. The returned string
-     * is expected to be statically allocated and not need to be freed.
-     * Returns NULL if slot does not match an existing slot.
-     */
-    const char* (*getSuffix)(unsigned slot);
+	/*
+	* (*isSlotMarkedSucessful)() returns if the slot passed in parameter has
+	* been marked as successful using markBootSuccessful.
+	* Returns 1 if the slot has been marked as successful, 0 if it's
+	* not the case, and -errno on error.
+	*/
+	int (*isSlotMarkedSuccessful)(unsigned slot);
 
-    /*
-     * (*isSlotMarkedSucessful)() returns if the slot passed in parameter has
-     * been marked as successful using markBootSuccessful.
-     * Returns 1 if the slot has been marked as successful, 0 if it's
-     * not the case, and -errno on error.
-     */
-    int (*isSlotMarkedSuccessful)(unsigned slot);
-
-    /**
-     * Returns the active slot to boot into on the next boot. If
-     * setActiveBootSlot() has been called, the getter function should return
-     * the same slot as the one provided in the last setActiveBootSlot() call.
-     */
-    unsigned (*getActiveBootSlot)();
+	/**
+	* Returns the active slot to boot into on the next boot. If
+	* setActiveBootSlot() has been called, the getter function should return
+	* the same slot as the one provided in the last setActiveBootSlot() call.
+	*/
+	unsigned (*getActiveBootSlot)();
 };
 
 extern const struct boot_control_module bootctl;
 extern const struct boot_control_module bootctl_test;
 
-#endif  // __BOOTCTRL_H__
+#endif // __BOOTCTRL_H__

@@ -9,7 +9,6 @@ endif
 src = [
         'qbootctl.c',
         'bootctrl_impl.c',
-        'bootctrl_test.c',
         'gpt-utils.c',
         'ufs-bsg.c',
         'crc32.c',

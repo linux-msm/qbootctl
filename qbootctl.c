@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Caleb Connolly <caleb@connolly.tech>
+ * Copyright (C) 2023 Caleb Connolly <caleb@connolly.tech>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -139,11 +139,6 @@ int main(int argc, char **argv)
 	int optflag;
 	int slot = -1;
 	int rc;
-
-	const char* IS_TEST = getenv("QBOOTCTL_TEST");
-	if (IS_TEST) {
-		impl = &bootctl_test;
-	}
 
 	if(geteuid() != 0) {
 		fprintf(stderr, "This program must be run as root!\n");

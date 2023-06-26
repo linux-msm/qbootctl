@@ -35,7 +35,6 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <dirent.h>
-#include <endian.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>

@@ -1,4 +1,4 @@
-project('qbootctl', 'c', default_options : ['c_std=c11'])
+project('qbootctl', 'c', default_options : ['c_std=gnu11'])
 
 cc = meson.get_compiler('c')
 

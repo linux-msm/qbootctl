@@ -69,7 +69,7 @@ struct boot_control_module {
 	* setSlotAsUnbootable.
 	* Returns 0 on success, -errno on error.
 	*/
-	int (*setActiveBootSlot)(unsigned slot);
+	int (*setActiveBootSlot)(unsigned slot, bool ignore_missing_bsg);
 
 	/*
 	* (*setSlotAsUnbootable)() marks the slot passed in parameter as

@@ -34,6 +34,7 @@ qbootctl [-c|-m|-s|-u|-b|-n|-x] [SLOT]
     -s SLOT          set to active slot to SLOT
     -m [SLOT]        mark a boot as successful (default: current)
     -u [SLOT]        mark SLOT as unbootable (default: current)
+    -i               still write the GPT headers even if the UFS bLun can't be changed (default: false)
 ```
 
 ## Debugging

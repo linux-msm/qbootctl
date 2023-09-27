@@ -74,6 +74,7 @@ fail:
 
 int usage()
 {
+	// clang-format off
 	fprintf(stderr, "qbootctl: qcom bootctrl HAL port for Linux\n");
 	fprintf(stderr, "-------------------------------------------\n");
 	fprintf(stderr, "qbootctl [-c|-m|-s|-u|-b|-n|-x] [SLOT]\n\n");
@@ -81,17 +82,14 @@ int usage()
 	fprintf(stderr, "    -h               this help text\n");
 	fprintf(stderr, "    -c               get the current slot\n");
 	fprintf(stderr, "    -a               get the active slot\n");
-	fprintf(stderr,
-		"    -b SLOT          check if SLOT is marked as bootable\n");
-	fprintf(stderr,
-		"    -n SLOT          check if SLOT is marked as successful\n");
-	fprintf(stderr,
-		"    -x [SLOT]        get the slot suffix for SLOT (default: current)\n");
+	fprintf(stderr, "    -b SLOT          check if SLOT is marked as bootable\n");
+	fprintf(stderr, "    -n SLOT          check if SLOT is marked as successful\n");
+	fprintf(stderr, "    -x [SLOT]        get the slot suffix for SLOT (default: current)\n");
 	fprintf(stderr, "    -s SLOT          set to active slot to SLOT\n");
-	fprintf(stderr,
-		"    -m [SLOT]        mark a boot as successful (default: current)\n");
-	fprintf(stderr,
-		"    -u [SLOT]        mark SLOT as unbootable (default: current)\n");
+	fprintf(stderr, "    -m [SLOT]        mark a boot as successful (default: current)\n");
+	fprintf(stderr, "    -u [SLOT]        mark SLOT as unbootable (default: current)\n");
+	fprintf(stderr, "    -i               still write the GPT headers even if the UFS bLun can't be changed (default: false)\n");
+	// clang-format on
 
 	return 1;
 }
@@ -139,6 +137,7 @@ int main(int argc, char **argv)
 	int optflag;
 	int slot = -1;
 	int rc;
+	bool ignore_missing_bsg = false;
 
 	if(geteuid() != 0) {
 		fprintf(stderr, "This program must be run as root!\n");
@@ -185,7 +184,7 @@ int main(int argc, char **argv)
 		printf("%s\n", impl->getSuffix(slot));
 		return 0;
 	case 's':
-		rc = impl->setActiveBootSlot(slot);
+		rc = impl->setActiveBootSlot(slot, ignore_missing_bsg);
 		if (rc < 0) {
 			fprintf(stderr, "SLOT %s: Failed to set active\n",
 				impl->getSuffix(slot));
@@ -210,6 +209,9 @@ int main(int argc, char **argv)
 		}
 		printf("SLOT %s: Set as unbootable\n", impl->getSuffix(slot));
 		return 0;
+	case 'i':
+		ignore_missing_bsg = true;
+		break;
 	case 'h':
 	default:
 		usage();

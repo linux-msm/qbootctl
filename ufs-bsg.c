@@ -174,13 +174,12 @@ int32_t set_boot_lun(__u8 lun_id)
 	ret = ufs_query_attr(fd_ufs_bsg, boot_lun_id, QUERY_REQ_FUNC_STD_WRITE,
 			     QUERY_REQ_OP_WRITE_ATTR, QUERY_ATTR_IDN_BOOT_LU_EN,
 			     0, 0);
-	if (ret) {
+	if (ret)
 		fprintf(stderr,
 			"Error requesting ufs attr idn %d via query ioctl (return value: %d, error no: %d)",
 			QUERY_ATTR_IDN_BOOT_LU_EN, ret, errno);
-		goto out;
-	}
-out:
+
+
 	ufs_bsg_dev_close();
 	return ret;
 }

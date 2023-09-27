@@ -560,7 +560,7 @@ unsigned get_active_boot_slot()
 	return 0;
 }
 
-int set_active_boot_slot(unsigned slot)
+int set_active_boot_slot(unsigned slot, bool ignore_missing_bsg)
 {
 	enum boot_chain chain = (enum boot_chain)slot;
 	struct gpt_disk disk = { 0 };
@@ -576,7 +576,7 @@ int set_active_boot_slot(unsigned slot)
 
 	// Do this *before* updating all the slot attributes
 	// to make sure we can
-	if (!ismmc && ufs_bsg_dev_open() < 0) {
+	if (!ismmc && !ignore_missing_bsg && ufs_bsg_dev_open() < 0) {
 		return -1;
 	}
 
@@ -599,8 +599,10 @@ int set_active_boot_slot(unsigned slot)
 
 	rc = gpt_utils_set_xbl_boot_partition(chain);
 	if (rc) {
-		fprintf(stderr, "%s: Failed to switch xbl boot partition\n", __func__);
-		goto out;
+		if (ignore_missing_bsg && rc == -ENODEV)
+			rc = 0;
+		else
+			fprintf(stderr, "%s: Failed to switch xbl boot partition\n", __func__);
 	}
 
 out:

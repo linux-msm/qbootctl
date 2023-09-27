@@ -216,7 +216,7 @@ static uint8_t *gpt_pentry_seek(const char *ptn_name, const uint8_t *pentries_st
 // Defined in ufs-bsg.cpp
 int32_t set_boot_lun(uint8_t lun_id);
 
-	// Swtich betwieen using either the primary or the backup
+// Switch between using either the primary or the backup
 // boot LUN for boot. This is required since UFS boot partitions
 // cannot have a backup GPT which is what we use for failsafe
 // updates of the other 'critical' partitions. This function will
@@ -238,6 +238,7 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 	struct stat st;
 	uint8_t boot_lun_id = 0;
 	const char *boot_dev = NULL;
+	int ret = -1;
 
 	(void)st;
 	(void)boot_dev;
@@ -277,11 +278,12 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 	LOGD("%s: setting %s lun as boot lun\n", __func__, boot_dev);
 
 	if (set_boot_lun(boot_lun_id)) {
+		ret = -ENODEV;
 		goto error;
 	}
 	return 0;
 error:
-	return -1;
+	return ret;
 }
 
 // Given a parttion name(eg: rpm) get the path to the block device that

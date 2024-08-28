@@ -331,7 +331,34 @@ int get_boot_attr(struct gpt_disk *disk, unsigned slot, enum part_attr_type attr
 	return get_partition_attribute(disk, bootPartition, attr);
 }
 
-static unsigned int get_current_slot_from_kernel_cmdline()
+unsigned get_active_boot_slot()
+{
+	struct gpt_disk disk = { 0 };
+	uint32_t num_slots = get_number_slots();
+
+	if (num_slots <= 1) {
+		// Slot 0 is the only slot around.
+		return 0;
+	}
+
+	for (uint32_t i = 0; i < num_slots; i++) {
+		if (get_boot_attr(&disk, i, ATTR_SLOT_ACTIVE)) {
+			gpt_disk_free(&disk);
+			return i;
+		}
+	}
+
+	fprintf(stderr, "%s: Failed to find the active boot slot\n", __func__);
+	gpt_disk_free(&disk);
+	return 0;
+}
+
+/*
+ * The current slot is usually made available via the kernel cmdline. If it isn't for some reason
+ * (e.g. because we booted via a secondary bootloader that removes Android cmdline args) then we
+ * assume that the active slot is the current slot
+ */
+static unsigned int get_current_or_active_slot()
 {
 	uint32_t num_slots = 0;
 	char bootSlotProp[MAX_CMDLINE_SIZE] = { '\0' };
@@ -342,10 +369,10 @@ static unsigned int get_current_slot_from_kernel_cmdline()
 		return 0;
 	}
 
-	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "_a");
+	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "N/A");
 	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
 		fprintf(stderr, "%s: Unable to read boot slot property\n", __func__);
-		return 0;
+		return get_active_boot_slot();
 	}
 
 	// Iterate through a list of partitons named as boot+suffix
@@ -538,28 +565,6 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	return 0;
 }
 
-unsigned get_active_boot_slot()
-{
-	struct gpt_disk disk = { 0 };
-	uint32_t num_slots = get_number_slots();
-
-	if (num_slots <= 1) {
-		// Slot 0 is the only slot around.
-		return 0;
-	}
-
-	for (uint32_t i = 0; i < num_slots; i++) {
-		if (get_boot_attr(&disk, i, ATTR_SLOT_ACTIVE)) {
-			gpt_disk_free(&disk);
-			return i;
-		}
-	}
-
-	fprintf(stderr, "%s: Failed to find the active boot slot\n", __func__);
-	gpt_disk_free(&disk);
-	return 0;
-}
-
 int set_active_boot_slot(unsigned slot, bool ignore_missing_bsg)
 {
 	enum boot_chain chain = (enum boot_chain)slot;
@@ -638,7 +643,7 @@ int is_slot_marked_successful(unsigned slot)
 }
 
 const struct boot_control_module bootctl = {
-	.getCurrentSlot = get_current_slot_from_kernel_cmdline,
+	.getCurrentSlot = get_current_or_active_slot,
 	.markBootSuccessful = mark_boot_successful,
 	.setActiveBootSlot = set_active_boot_slot,
 	.setSlotAsUnbootable = set_slot_as_unbootable,

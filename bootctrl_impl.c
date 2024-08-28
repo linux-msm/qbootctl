@@ -331,38 +331,6 @@ int get_boot_attr(struct gpt_disk *disk, unsigned slot, enum part_attr_type attr
 	return get_partition_attribute(disk, bootPartition, attr);
 }
 
-static unsigned int get_current_slot_from_kernel_cmdline()
-{
-	uint32_t num_slots = 0;
-	char bootSlotProp[MAX_CMDLINE_SIZE] = { '\0' };
-	unsigned i = 0;
-	num_slots = get_number_slots();
-	if (num_slots <= 1) {
-		// Slot 0 is the only slot around.
-		return 0;
-	}
-
-	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "_a");
-	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
-		fprintf(stderr, "%s: Unable to read boot slot property\n", __func__);
-		return 0;
-	}
-
-	// Iterate through a list of partitons named as boot+suffix
-	// and see which one is currently active.
-	for (i = 0; slot_suffix_arr[i] != NULL; i++) {
-		if (!strncmp(bootSlotProp, slot_suffix_arr[i], strlen(slot_suffix_arr[i]))) {
-			// printf("%s current_slot = %d\n", __func__, i);
-			return i;
-		}
-	}
-
-	// The HAL spec requires that we return a number between
-	// 0 to num_slots - 1. Since something went wrong here we
-	// are just going to return the default slot.
-	return 0;
-}
-
 int is_slot_bootable(unsigned slot)
 {
 	int attr = 0;
@@ -557,6 +525,38 @@ unsigned get_active_boot_slot()
 
 	fprintf(stderr, "%s: Failed to find the active boot slot\n", __func__);
 	gpt_disk_free(&disk);
+	return 0;
+}
+
+static unsigned int get_current_slot_from_kernel_cmdline()
+{
+	uint32_t num_slots = 0;
+	char bootSlotProp[MAX_CMDLINE_SIZE] = { '\0' };
+	unsigned i = 0;
+	num_slots = get_number_slots();
+	if (num_slots <= 1) {
+		// Slot 0 is the only slot around.
+		return 0;
+	}
+
+	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "N/A");
+	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
+		fprintf(stderr, "%s: Unable to read boot slot property\n", __func__);
+		return get_active_boot_slot();
+	}
+
+	// Iterate through a list of partitons named as boot+suffix
+	// and see which one is currently active.
+	for (i = 0; slot_suffix_arr[i] != NULL; i++) {
+		if (!strncmp(bootSlotProp, slot_suffix_arr[i], strlen(slot_suffix_arr[i]))) {
+			// printf("%s current_slot = %d\n", __func__, i);
+			return i;
+		}
+	}
+
+	// The HAL spec requires that we return a number between
+	// 0 to num_slots - 1. Since something went wrong here we
+	// are just going to return the default slot.
 	return 0;
 }
 

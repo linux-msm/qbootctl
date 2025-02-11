@@ -403,7 +403,7 @@ static int gpt_get_headers(const char *partname, uint8_t **primary, uint8_t **ba
 		goto error;
 	}
 
-	fd = open(devpath, O_RDWR);
+	fd = open(devpath, O_RDONLY);
 	if (fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s : %s\n", __func__, devpath, strerror(errno));
 		return -1;
@@ -638,7 +638,7 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 
 	disk->hdr_bak_crc = efi_crc32(disk->hdr_bak, gpt_header_size);
 
-	fd = open(disk->devpath, O_RDWR);
+	fd = open(disk->devpath, O_RDONLY);
 	if (fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s: %s\n", __func__, disk->devpath,
 			strerror(errno));

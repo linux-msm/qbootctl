@@ -358,13 +358,15 @@ unsigned get_active_boot_slot()
  * (e.g. because we booted via a secondary bootloader that removes Android cmdline args) then we
  * assume that the active slot is the current slot
  */
-static unsigned int get_current_or_active_slot()
+static int get_current_or_active_slot()
 {
 	uint32_t num_slots = 0;
 	char bootSlotProp[MAX_CMDLINE_SIZE] = { '\0' };
 	unsigned i = 0;
 	num_slots = get_number_slots();
-	if (num_slots <= 1) {
+	if (num_slots == 0)
+		return -ENOENT;
+	if (num_slots == 1) {
 		// Slot 0 is the only slot around.
 		return 0;
 	}

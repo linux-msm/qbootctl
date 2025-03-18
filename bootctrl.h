@@ -51,8 +51,9 @@ struct boot_control_module {
 	* The returned value is always guaranteed to be strictly less than the
 	* value returned by getNumberSlots. Slots start at 0 and
 	* finish at getNumberSlots() - 1
+	* Returns -ENOENT on devices with no slots.
 	*/
-	unsigned (*getCurrentSlot)();
+	int (*getCurrentSlot)();
 
 	/*
 	* (*markBootSuccessful)() marks the specified slot

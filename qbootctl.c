@@ -115,10 +115,9 @@ int get_slot_info(struct slot_info *slots)
 	return 0;
 }
 
-void dump_info()
+static void dump_info(int current_slot)
 {
 	struct slot_info slots[2] = { { 0 } };
-	int current_slot = impl->getCurrentSlot();
 
 	get_slot_info(slots);
 
@@ -135,7 +134,7 @@ void dump_info()
 int main(int argc, char **argv)
 {
 	int optflag;
-	int slot = -1;
+	int slot = -1, current_slot;
 	int rc;
 	bool ignore_missing_bsg = false;
 
@@ -144,9 +143,15 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	current_slot = impl->getCurrentSlot();
+	if (current_slot < 0) {
+		fprintf(stderr, "No slots found, is this an A/B device?\n");
+		return 1;
+	}
+
 	switch (argc) {
 	case 1:
-		dump_info();
+		dump_info(current_slot);
 		return 0;
 	case 2:
 		break;
@@ -157,14 +162,13 @@ int main(int argc, char **argv)
 		return usage();
 	}
 
-	if (slot < 0)
-		slot = impl->getCurrentSlot();
-
 	optflag = getopt(argc, argv, "hcmas:ub:n:x");
+
+	if (slot < 0 || optflag == 'c')
+		slot = current_slot;
 
 	switch (optflag) {
 	case 'c':
-		slot = impl->getCurrentSlot();
 		printf("Current slot: %s\n", impl->getSuffix(slot));
 		return 0;
 	case 'a':

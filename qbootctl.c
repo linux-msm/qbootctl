@@ -194,10 +194,12 @@ int main(int argc, char **argv)
 		return 0;
 	case 'm':
 		rc = impl->markBootSuccessful(slot);
-		if (rc < 0)
+		if (rc == -ENODEV)
+			printf("Did not mark any boot as successful, not necessary\n");
+		else if (rc < 0)
 			return 1;
-		printf("SLOT %s: Marked boot successful\n",
-		       impl->getSuffix(slot));
+		else
+			printf("SLOT %s: Marked boot successful\n", impl->getSuffix(slot));
 		return 0;
 	case 'u':
 		rc = impl->setSlotAsUnbootable(slot);

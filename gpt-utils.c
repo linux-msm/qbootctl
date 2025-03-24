@@ -613,6 +613,11 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 	}
 
 	if (disk->is_initialized == GPT_DISK_INIT_MAGIC) {
+		/* Commit any changes to the disk */
+		if (gpt_disk_commit(disk)) {
+			fprintf(stderr, "Failed to commit disk entry");
+			return -1;
+		}
 		// We already have a valid disk handle. Free it.
 		LOGD("%s: Freeing disk handle for %s... -> %s\n", __func__, disk->devpath, devpath);
 		gpt_disk_free(disk);

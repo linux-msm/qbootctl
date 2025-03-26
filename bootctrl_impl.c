@@ -412,8 +412,10 @@ int mark_boot_successful(unsigned slot)
 	int ret = 0;
 
 	if (successful < 0 || unbootable < 0) {
-		fprintf(stderr, "SLOT %s: Failed to read attributes\n", slot_suffix_arr[slot]);
-		ret = -1;
+		fprintf(stderr,
+			"SLOT %s: Failed to read attributes - the device is probably not A/B partitioned\n",
+			slot_suffix_arr[slot]);
+		ret = -ENODEV;
 		goto out;
 	}
 

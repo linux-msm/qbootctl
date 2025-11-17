@@ -23,3 +23,11 @@ executable('qbootctl', src,
         install: true,
         c_args: [],
 )
+
+configure_file(
+        input: 'qbootctl.service.in',
+        output: 'qbootctl.service',
+        configuration: { 'bindir': get_option('prefix') / 'bin' },
+        install: true,
+        install_dir: get_option('prefix') / 'lib' / 'systemd' / 'system',
+)

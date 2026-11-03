@@ -80,7 +80,10 @@ extern "C" {
 #define PTN_SWAP_LIST \
 	"abl_a", "aop_a", "apdp_a", "cmnlib_a", "cmnlib64_a", "devcfg_a", "dtbo_a", \
 	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
-	"vbmeta_a", "vbmeta_system_a"
+	"vbmeta_a", "vbmeta_system_a", \
+	"bluetooth_a", "cpucp_a", "dsp_a", "featenabler_a", "imagefv_a", \
+	"mdtp_a", "mdtpsecapp_a", "multiimgoem_a", "qweslicstore_a", "shrm_a", \
+	"uefisecapp_a", "vendor_boot_a"
 
 static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
 	PTN_SWAP_LIST, "boot_a", "system_a",
@@ -138,6 +141,7 @@ void gpt_disk_free(struct gpt_disk *disk);
 // is passed in via dev
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);
 
+int get_dev_path_from_partition_name(const char *partname, char *buf, size_t buflen);
 int partition_is_for_disk(const struct gpt_disk *disk, const char *part, char *blockdev, int blockdev_len);
 
 // Get pointer to partition entry from a allocated gpt_disk structure

@@ -81,6 +81,11 @@
 				(*(pentry + AB_FLAG_OFFSET) & ~AB_PARTITION_ATTR_SLOT_ACTIVE);     \
 	})
 
+static const uint8_t ab_inactive_guid[TYPE_GUID_SIZE] = {
+	0xd4, 0x6c, 0x03, 0x77, 0xd5, 0x03, 0xbb, 0x42,
+	0x8e, 0xd1, 0x37, 0xe5, 0xa8, 0x8b, 0xaa, 0x34,
+};
+
 const char *slot_suffix_arr[] = { AB_SLOT_A_SUFFIX, AB_SLOT_B_SUFFIX, NULL };
 
 enum part_attr_type {
@@ -468,9 +473,40 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	uint8_t *pentryB_bak = NULL;
 	struct stat st;
 
+	// get_number_slots() counts every boot_* partition, so it can report
+	// more than two slots; only A and B are supported here.
+	if (slot > 1) {
+		fprintf(stderr, "%s: Unknown slot %u!\n", __func__, slot);
+		return -1;
+	}
+
 	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
 
+	// Handle the partitions one disk at a time, so that each disk's GPT
+	// is written exactly once.
+	char devs[MAX_BLOCK_DEVICES][GPT_PTN_PATH_MAX];
+	char devpath[GPT_PTN_PATH_MAX];
+	int ptn_dev[ARRAY_SIZE(g_all_ptns)]; // index into devs, or -1
+	int ndevs = 0, d, j;
+
+	for (i = 0; i < ARRAY_SIZE(g_all_ptns); i++) {
+		ptn_dev[i] = -1;
+		if (get_dev_path_from_partition_name(g_all_ptns[i], devpath, sizeof(devpath)))
+			continue;
+		for (j = 0; j < ndevs && strcmp(devs[j], devpath); j++)
+			;
+		if (j == ndevs) {
+			if (ndevs == MAX_BLOCK_DEVICES)
+				continue;
+			strcpy(devs[ndevs++], devpath);
+		}
+		ptn_dev[i] = j;
+	}
+
+	for (d = 0; d < ndevs; d++) {
 	for (i = 0, slotA = g_all_ptns[0]; i < ARRAY_SIZE(g_all_ptns); slotA = g_all_ptns[++i]) {
+		if (ptn_dev[i] != d)
+			continue;
 		// Chop off the slot suffix from the partition name to
 		// make the string easier to work with.
 		LOGD("Part: %s\n", slotA);
@@ -524,29 +560,31 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		     *(uint16_t *)(pentryA_bak + AB_FLAG_OFFSET));
 		LOGD("\tAB attr (B): 0x%x (backup: 0x%x)\n", *(uint16_t *)(pentryB + AB_FLAG_OFFSET),
 		     *(uint16_t *)(pentryB_bak + AB_FLAG_OFFSET));
-		memset(active_guid, '\0', sizeof(active_guid));
-		memset(inactive_guid, '\0', sizeof(inactive_guid));
-		if (get_partition_attribute(disk, slotA, ATTR_SLOT_ACTIVE) == 1) {
-			// A is the current active slot
-			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
-			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-		} else if (get_partition_attribute(disk, slotB, ATTR_SLOT_ACTIVE) == 1) {
-			// B is the current active slot
-			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
-		} else {
-			fprintf(stderr, "Both A & B are inactive..Aborting");
+		// Qualcomm boot firmware finds the active copy of a partition by
+		// its type GUID: the active copy carries the real GUID, the
+		// inactive copy carries AB_INACTIVE_GUID. Decide which GUID is
+		// real from the GUIDs themselves (the active flags can disagree
+		// with them), then give the real GUID to the requested slot.
+		if (memcmp(pentryA, pentryA_bak, TYPE_GUID_SIZE) ||
+		    memcmp(pentryB, pentryB_bak, TYPE_GUID_SIZE)) {
+			fprintf(stderr, "%s: primary and backup GPT disagree, aborting\n", slotA);
 			return -1;
 		}
+		bool a_ph = !memcmp(pentryA, ab_inactive_guid, TYPE_GUID_SIZE);
+		bool b_ph = !memcmp(pentryB, ab_inactive_guid, TYPE_GUID_SIZE);
+		if (a_ph == b_ph) {
+			// Same GUID on both, or two distinct real GUIDs:
+			// nothing to swap, only update the flags.
+			memcpy(active_guid, pentryA, TYPE_GUID_SIZE);
+			memcpy(inactive_guid, pentryB, TYPE_GUID_SIZE);
+		} else {
+			const uint8_t *real = a_ph ? pentryB : pentryA;
+			memcpy(active_guid, slot == 0 ? real : ab_inactive_guid, TYPE_GUID_SIZE);
+			memcpy(inactive_guid, slot == 1 ? real : ab_inactive_guid, TYPE_GUID_SIZE);
+		}
+		// active_guid now holds A's new GUID and inactive_guid B's.
 		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
 		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;
-
-		// This check *Really* shouldn't be here... But I don't know this codebase
-		// well enough to remove it.
-		if (slot > 1) {
-			fprintf(stderr, "%s: Unknown slot %d!\n", __func__, slot);
-			return -1;
-		}
 
 		// Mark A as active in primary table
 		UPDATE_SLOT(pentryA, active_guid, a_state);
@@ -559,9 +597,15 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	}
 
 	// write updated content to disk
-	if (gpt_disk_commit(disk)) {
-		fprintf(stderr, "Failed to commit disk entry");
-		return -1;
+	if (disk->is_initialized == GPT_DISK_INIT_MAGIC) {
+		if (gpt_disk_commit(disk)) {
+			fprintf(stderr, "Failed to commit disk entry");
+			return -1;
+		}
+		// Already written: drop the handle so the next disk doesn't
+		// commit this one again when it replaces it.
+		gpt_disk_free(disk);
+	}
 	}
 
 	return 0;

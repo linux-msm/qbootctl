@@ -291,7 +291,7 @@ error:
 // would be the default emmc dev(/dev/mmcblk0). In the case of UFS we look
 // through the /dev/disk/bootdevice/by-name/ tree for partname, and resolve
 // the path to the LUN from there.
-static int get_dev_path_from_partition_name(const char *partname, char *buf, size_t buflen)
+int get_dev_path_from_partition_name(const char *partname, char *buf, size_t buflen)
 {
 	char path[GPT_PTN_PATH_MAX] = { 0 };
 	int i;

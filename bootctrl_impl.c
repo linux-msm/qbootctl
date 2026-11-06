@@ -545,13 +545,15 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			// A is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-		} else if (get_partition_attribute(bdisk, slotB, ATTR_SLOT_ACTIVE) == 1) {
-			// B is the current active slot
+		} else if (get_partition_attribute(bdisk, slotB, ATTR_SLOT_ACTIVE) == 1 ||
+			   get_current_or_active_slot() == 1) {
+			// B is the current active slot, or neither is marked active
+			// and B, the slot we booted from, holds the active GUID
 			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 		} else {
-			fprintf(stderr, "Both A & B are inactive..Aborting");
-			return -1;
+			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
+			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 		}
 		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
 		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;

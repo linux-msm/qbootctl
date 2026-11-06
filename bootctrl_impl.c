@@ -453,8 +453,9 @@ const char *get_suffix(unsigned slot)
 }
 
 
-// The argument here is a vector of partition names(including the slot suffix)
-// that lie on a single disk
+// The argument here is a vector of partition names(including the slot suffix).
+// On UFS the two slots of some pairs, such as xbl_config_a and xbl_config_b,
+// lie on two different boot LUNs
 static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 						   unsigned slot)
 {
@@ -471,6 +472,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	uint8_t *pentryB = NULL;
 	uint8_t *pentryB_bak = NULL;
 	struct stat st;
+	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
 
@@ -512,12 +514,20 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		if (gpt_disk_get_disk_info(slotA, disk) < 0)
 			return -1;
 
+		struct gpt_disk disk_b = { 0 };
+		struct gpt_disk *bdisk = disk;
+		if (!partition_is_for_disk(disk, slotB, devpath, sizeof(devpath))) {
+			bdisk = &disk_b;
+			if (gpt_disk_get_disk_info(slotB, bdisk) < 0)
+				return -1;
+		}
+
 		// Get partition entry for slot A & B from the primary
 		// and backup tables.
 		pentryA = gpt_disk_get_pentry(disk, slotA, PRIMARY_GPT);
 		pentryA_bak = gpt_disk_get_pentry(disk, slotA, SECONDARY_GPT);
-		pentryB = gpt_disk_get_pentry(disk, slotB, PRIMARY_GPT);
-		pentryB_bak = gpt_disk_get_pentry(disk, slotB, SECONDARY_GPT);
+		pentryB = gpt_disk_get_pentry(bdisk, slotB, PRIMARY_GPT);
+		pentryB_bak = gpt_disk_get_pentry(bdisk, slotB, SECONDARY_GPT);
 		if (!pentryA || !pentryA_bak || !pentryB || !pentryB_bak) {
 			// None of these should be NULL since we have already
 			// checked for A & B versions earlier.
@@ -534,7 +544,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			// A is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-		} else if (get_partition_attribute(disk, slotB, ATTR_SLOT_ACTIVE) == 1) {
+		} else if (get_partition_attribute(bdisk, slotB, ATTR_SLOT_ACTIVE) == 1) {
 			// B is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
@@ -559,6 +569,15 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		UPDATE_SLOT(pentryA_bak, guidA, a_state);
 		UPDATE_SLOT(pentryB, guidB, b_state);
 		UPDATE_SLOT(pentryB_bak, guidB, b_state);
+
+		if (bdisk != disk) {
+			rc = gpt_disk_commit(bdisk);
+			gpt_disk_free(bdisk);
+			if (rc) {
+				fprintf(stderr, "Failed to commit disk entry");
+				return -1;
+			}
+		}
 	}
 
 	// write updated content to disk

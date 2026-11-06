@@ -80,7 +80,9 @@ extern "C" {
 #define PTN_SWAP_LIST \
 	"abl_a", "aop_a", "apdp_a", "cmnlib_a", "cmnlib64_a", "devcfg_a", "dtbo_a", \
 	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
-	"vbmeta_a", "vbmeta_system_a"
+	"vbmeta_a", "vbmeta_system_a", "aop_config_a", "cpucp_a", "featenabler_a", "mdtp_a", \
+	"mdtpsecapp_a", "shrm_a", "uefi_a", "uefisecapp_a", "multiimgoem_a", "multiimgqti_a", \
+	"xbl_config_a"
 
 static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
 	PTN_SWAP_LIST, "boot_a", "system_a",

@@ -555,6 +555,11 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 		}
+		// XBL opens xbl_config on the boot LUN it was loaded from, and the
+		// boot LUN is switched only after the GPTs: keep the active GUID on
+		// both boot LUNs so that XBL finds it if the switch is interrupted
+		if (bdisk != disk && !strcmp(slotA, "xbl_config_a"))
+			memcpy((void *)inactive_guid, (const void *)active_guid, TYPE_GUID_SIZE);
 		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
 		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;
 

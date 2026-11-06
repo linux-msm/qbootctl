@@ -66,6 +66,7 @@
 #define BOOT_IMG_PTN_NAME "boot_"
 #define LUN_NAME_END_LOC  14
 #define BOOT_SLOT_PROP	  "slot_suffix"
+#define SYSTEMD_SLOT_PROP "SLOT_SUFFIX"
 
 #define MAX_CMDLINE_SIZE  4096
 
@@ -106,10 +107,8 @@ void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
 	close(fd);
 	pcmd[rc] = '\0';
 	found = strstr(pcmd, arg);
-	if (!found || !(val = strstr(found, "="))) {
-		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
+	if (!found || !(val = strstr(found, "=")))
 		goto error;
-	}
 
 	val++;
 	// no this doesn't handle quotes lol
@@ -376,6 +375,8 @@ static int get_current_or_active_slot()
 	}
 
 	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "N/A");
+	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A")))
+		get_kernel_cmdline_arg(SYSTEMD_SLOT_PROP, bootSlotProp, "N/A");
 	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
 		fprintf(stderr, "%s: Unable to read boot slot property\n", __func__);
 		return get_active_boot_slot();

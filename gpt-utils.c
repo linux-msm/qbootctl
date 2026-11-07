@@ -719,8 +719,13 @@ static int gpt_disk_read(struct gpt_disk *disk)
 	close(fd);
 
 	disk->primary_valid = gpt_is_valid(disk->hdr, disk->pentry_arr, 1, disk->block_size);
+	// Some tools put the backup array 33 blocks before the end of the disk,
+	// the layout for 512-byte blocks, which is inside the usable area with
+	// 4096-byte blocks
 	disk->backup_valid =
-		gpt_is_valid(disk->hdr_bak, disk->pentry_arr_bak, backup_lba, disk->block_size);
+		gpt_is_valid(disk->hdr_bak, disk->pentry_arr_bak, backup_lba, disk->block_size) &&
+		GET_8_BYTES(disk->hdr_bak + PENTRIES_OFFSET) >
+			GET_8_BYTES(disk->hdr_bak + LAST_USABLE_LBA_OFFSET);
 
 	disk->pentry_size = GET_4_BYTES(disk->hdr + PENTRY_SIZE_OFFSET);
 	disk->pentry_arr_size = GET_4_BYTES(disk->hdr + PARTITION_COUNT_OFFSET) * disk->pentry_size;

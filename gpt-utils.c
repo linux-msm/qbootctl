@@ -92,6 +92,10 @@
 	*((uint8_t *)(ptr) + 2) = ((y) >> 16) & 0xff;                                              \
 	*((uint8_t *)(ptr) + 3) = ((y) >> 24) & 0xff;
 
+#define PUT_8_BYTES(ptr, y)                                                                        \
+	PUT_4_BYTES(ptr, (uint64_t)(y) & 0xffffffff);                                              \
+	PUT_4_BYTES((uint8_t *)(ptr) + 4, (uint64_t)(y) >> 32);
+
 enum gpt_state { GPT_OK = 0, GPT_BAD_SIGNATURE, GPT_BAD_CRC };
 // List of LUN's containing boot critical images.
 // Required in the case of UFS devices
@@ -383,25 +387,14 @@ error:
 	return -1;
 }
 
-// Read out the GPT headers for the disk that contains the partition partname
-static int gpt_get_headers(const char *partname, uint8_t **primary, uint8_t **backup)
+// Read out the GPT headers of the disk devpath
+static int gpt_get_headers(const char *devpath, uint8_t **primary, uint8_t **backup)
 {
 	uint8_t *hdr = NULL;
-	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 	off_t hdr_offset = 0;
 	uint32_t block_size = 0;
 	int instance;
 	int fd = -1;
-
-	if (!partname) {
-		fprintf(stderr, "%s: Invalid partition name\n", __func__);
-		goto error;
-	}
-
-	if (get_dev_path_from_partition_name(partname, devpath, sizeof(devpath)) != 0) {
-		fprintf(stderr, "%s: Failed to resolve path for %s\n", __func__, partname);
-		goto error;
-	}
 
 	fd = open(devpath, O_RDONLY);
 	if (fd < 0) {
@@ -411,7 +404,7 @@ static int gpt_get_headers(const char *partname, uint8_t **primary, uint8_t **ba
 
 	block_size = gpt_get_block_size(fd);
 	if (block_size == 0) {
-		fprintf(stderr, "%s: Failed to get gpt block size for %s\n", __func__, partname);
+		fprintf(stderr, "%s: Failed to get gpt block size for %s\n", __func__, devpath);
 		goto error;
 	}
 
@@ -555,6 +548,7 @@ void gpt_disk_free(struct gpt_disk *disk)
 		disk->pentry_arr_bak = NULL;
 	}
 
+	disk->primary_first = false;
 	disk->is_initialized = 0;
 
 	return;
@@ -587,19 +581,73 @@ int partition_is_for_disk(const struct gpt_disk *disk, const char *part, char *b
 	return false;
 }
 
+// The checks of a GPT in UEFI 2.10, 5.3.2: signature, header CRC, MyLBA
+// and the CRC of the partition entry array
+static bool gpt_is_valid(uint8_t *hdr, const uint8_t *arr, uint64_t lba, uint32_t block_size)
+{
+	uint32_t hdr_size = GET_4_BYTES(hdr + HEADER_SIZE_OFFSET);
+	uint32_t hdr_crc = GET_4_BYTES(hdr + HEADER_CRC_OFFSET);
+	uint32_t arr_size =
+		GET_4_BYTES(hdr + PARTITION_COUNT_OFFSET) * GET_4_BYTES(hdr + PENTRY_SIZE_OFFSET);
+	bool crc_ok;
+
+	if (memcmp(hdr, GPT_SIGNATURE, strlen(GPT_SIGNATURE)) ||
+	    hdr_size < PARTITION_CRC_OFFSET + 4 || hdr_size > block_size)
+		return false;
+
+	PUT_4_BYTES(hdr + HEADER_CRC_OFFSET, 0);
+	crc_ok = efi_crc32(hdr, hdr_size) == hdr_crc;
+	PUT_4_BYTES(hdr + HEADER_CRC_OFFSET, hdr_crc);
+
+	return crc_ok && GET_8_BYTES(hdr + PRIMARY_HEADER_OFFSET) == lba &&
+	       efi_crc32(arr, arr_size) == GET_4_BYTES(hdr + PARTITION_CRC_OFFSET);
+}
+
+// Rebuild the invalid GPT of a disk from the valid one, as EDK2 restores a
+// GPT (PartitionRestoreGptTable in MdeModulePkg PartitionDxe/Gpt.c)
+static int gpt_disk_rebuild(struct gpt_disk *disk, enum gpt_instance instance)
+{
+	bool primary = instance == PRIMARY_GPT;
+	uint8_t *hdr = primary ? disk->hdr : disk->hdr_bak;
+	uint8_t **arr = primary ? &disk->pentry_arr : &disk->pentry_arr_bak;
+	const uint8_t *from = primary ? disk->hdr_bak : disk->hdr;
+	const uint8_t *from_arr = primary ? disk->pentry_arr_bak : disk->pentry_arr;
+	uint32_t arr_size =
+		GET_4_BYTES(from + PARTITION_COUNT_OFFSET) * GET_4_BYTES(from + PENTRY_SIZE_OFFSET);
+	uint64_t entries_lba = primary ? 2 : GET_8_BYTES(from + LAST_USABLE_LBA_OFFSET) + 1;
+	uint8_t *copy = malloc(arr_size);
+
+	if (!copy) {
+		fprintf(stderr, "%s: Failed to allocate memory for partition array\n", __func__);
+		return -1;
+	}
+	memcpy(copy, from_arr, arr_size);
+	free(*arr);
+	*arr = copy;
+
+	memcpy(hdr, from, disk->block_size);
+	PUT_8_BYTES(hdr + PRIMARY_HEADER_OFFSET, GET_8_BYTES(from + BACKUP_HEADER_OFFSET));
+	PUT_8_BYTES(hdr + BACKUP_HEADER_OFFSET, GET_8_BYTES(from + PRIMARY_HEADER_OFFSET));
+	PUT_8_BYTES(hdr + PENTRIES_OFFSET, entries_lba);
+	disk->pentry_size = GET_4_BYTES(from + PENTRY_SIZE_OFFSET);
+	disk->pentry_arr_size = arr_size;
+	return 0;
+}
+
+static int gpt_disk_read(struct gpt_disk *disk);
+
 /*
  * fills up the passed in gpt_disk struct with information about the
  * disk represented by path dev. Returns 0 on success and -1 on error.
  */
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 {
-	int fd = -1, rc;
-	uint32_t gpt_header_size = 0;
+	int rc;
 	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	if (!disk || !dev) {
 		fprintf(stderr, "%s: Invalid arguments\n", __func__);
-		goto error;
+		return -1;
 	}
 
 	rc = partition_is_for_disk(disk, dev, devpath, sizeof(devpath));
@@ -628,20 +676,22 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 	// devpath popualted by partition_is_for_disk
 	strncpy(disk->devpath, devpath, sizeof(disk->devpath));
 
-	if (gpt_get_headers(dev, &disk->hdr, &disk->hdr_bak)) {
+	return gpt_disk_read(disk);
+}
+
+// Read both GPTs of the disk disk->devpath and check them
+static int gpt_disk_read(struct gpt_disk *disk)
+{
+	int fd = -1;
+	uint64_t backup_lba;
+
+	if (gpt_get_headers(disk->devpath, &disk->hdr, &disk->hdr_bak)) {
 		fprintf(stderr, "%s: Failed to get GPT headers\n", __func__);
 		goto error;
 	}
 
 	assert(disk->hdr != NULL);
 	assert(disk->hdr_bak != NULL);
-
-	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
-
-	// FIXME: pointer offsets crc bleh
-	disk->hdr_crc = efi_crc32(disk->hdr, gpt_header_size);
-
-	disk->hdr_bak_crc = efi_crc32(disk->hdr_bak, gpt_header_size);
 
 	fd = open(disk->devpath, O_RDONLY);
 	if (fd < 0) {
@@ -664,18 +714,118 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk)
 		goto error;
 	}
 
+	disk->block_size = gpt_get_block_size(fd);
+	backup_lba = lseek64(fd, 0, SEEK_END) / disk->block_size - 1;
+	close(fd);
+
+	disk->primary_valid = gpt_is_valid(disk->hdr, disk->pentry_arr, 1, disk->block_size);
+	disk->backup_valid =
+		gpt_is_valid(disk->hdr_bak, disk->pentry_arr_bak, backup_lba, disk->block_size);
+
 	disk->pentry_size = GET_4_BYTES(disk->hdr + PENTRY_SIZE_OFFSET);
 	disk->pentry_arr_size = GET_4_BYTES(disk->hdr + PARTITION_COUNT_OFFSET) * disk->pentry_size;
 	disk->pentry_arr_crc = GET_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET);
 	disk->pentry_arr_bak_crc = GET_4_BYTES(disk->hdr_bak + PARTITION_CRC_OFFSET);
-	disk->block_size = gpt_get_block_size(fd);
-	close(fd);
 	disk->is_initialized = GPT_DISK_INIT_MAGIC;
 	return 0;
 error:
 	if (fd >= 0)
 		close(fd);
 	return -1;
+}
+
+// Fail if a header of the disk devpath has the GPT signature but neither GPT
+// is valid. A disk without a GPT passes.
+static int gpt_disk_check(const char *devpath)
+{
+	struct gpt_disk disk = { 0 };
+	size_t n = strlen(GPT_SIGNATURE);
+	int rc;
+
+	snprintf(disk.devpath, sizeof(disk.devpath), "%s", devpath);
+	rc = gpt_get_headers(devpath, &disk.hdr, &disk.hdr_bak);
+	if (!rc && (!memcmp(disk.hdr, GPT_SIGNATURE, n) || !memcmp(disk.hdr_bak, GPT_SIGNATURE, n))) {
+		gpt_disk_free(&disk);
+		rc = gpt_disk_read(&disk) || (!disk.primary_valid && !disk.backup_valid);
+	}
+	gpt_disk_free(&disk);
+	if (rc)
+		fprintf(stderr, "%s: No valid GPT on %s\n", __func__, devpath);
+	return rc ? -1 : 0;
+}
+
+// The SCSI host number of the disk name (sda), from the name
+// host:channel:target:lun of the SCSI device it belongs to
+static int scsi_host(const char *name)
+{
+	char path[PATH_MAX], dev[PATH_MAX];
+	const char *base;
+	unsigned host;
+
+	snprintf(path, sizeof(path), "/sys/block/%s/device", name);
+	if (!realpath(path, dev) || !(base = strrchr(dev, '/')) ||
+	    sscanf(base + 1, "%u:", &host) != 1)
+		return -1;
+	return host;
+}
+
+// udev removes the partition links of a disk without a valid GPT, so find
+// the disks by their device paths
+int gpt_utils_check_storage(const char *part)
+{
+	char devpath[GPT_PTN_PATH_MAX] = { 0 };
+	char path[PATH_MAX];
+	struct dirent *de;
+	DIR *dir;
+	int host, rc = 0;
+
+	if (get_dev_path_from_partition_name(part, devpath, sizeof(devpath))) {
+		fprintf(stderr, "%s: Failed to resolve path for %s\n", __func__, part);
+		return -1;
+	}
+	if (strncmp(devpath, "/dev/sd", strlen("/dev/sd")))
+		return gpt_disk_check(devpath);
+
+	host = scsi_host(devpath + LUN_NAME_START_LOC);
+	dir = host < 0 ? NULL : opendir("/sys/block");
+	if (!dir) {
+		fprintf(stderr, "%s: Failed to find the disks on the SCSI host of %s\n", __func__,
+			devpath);
+		return -1;
+	}
+	while (!rc && (de = readdir(dir))) {
+		if (strncmp(de->d_name, "sd", 2) || scsi_host(de->d_name) != host)
+			continue;
+		snprintf(path, sizeof(path), "/dev/%s", de->d_name);
+		rc = gpt_disk_check(path);
+	}
+	closedir(dir);
+	return rc;
+}
+
+// Callers read the primary GPT and change both, so the invalid GPT gets the
+// contents of the valid one before they look at either
+int gpt_disk_load_for_write(const char *dev, struct gpt_disk *disk)
+{
+	if (gpt_disk_get_disk_info(dev, disk))
+		return -1;
+
+	if (disk->primary_valid && disk->backup_valid)
+		return 0;
+	if (!disk->primary_valid && !disk->backup_valid) {
+		fprintf(stderr, "%s: Neither GPT of %s is valid\n", __func__, disk->devpath);
+		return -1;
+	}
+
+	fprintf(stderr, "%s: Rebuilding the %s GPT of %s from the %s GPT\n", __func__,
+		disk->primary_valid ? "backup" : "primary", disk->devpath,
+		disk->primary_valid ? "primary" : "backup");
+	disk->primary_first = !disk->primary_valid;
+	if (gpt_disk_rebuild(disk, disk->primary_valid ? SECONDARY_GPT : PRIMARY_GPT))
+		return -1;
+	disk->primary_valid = true;
+	disk->backup_valid = true;
+	return 0;
 }
 
 // Get pointer to partition entry from a allocated gpt_disk structure
@@ -738,12 +888,36 @@ static int gpt_disk_update_crc(struct gpt_disk *disk)
 }
 
 // Write the contents of struct gpt_disk back to the actual disk
+// Write one GPT of a disk: its partition array, then its header
+static int gpt_disk_write(struct gpt_disk *disk, int fd, enum gpt_instance instance)
+{
+	uint8_t *hdr = instance == PRIMARY_GPT ? disk->hdr : disk->hdr_bak;
+	uint8_t *arr = instance == PRIMARY_GPT ? disk->pentry_arr : disk->pentry_arr_bak;
+	const char *name = instance == PRIMARY_GPT ? "primary" : "backup";
+
+	LOGD("%s: Writing back %s GPT\n", __func__, name);
+	if (gpt_set_pentry_arr(hdr, fd, arr)) {
+		fprintf(stderr, "%s: Failed to write %s GPT partition arr\n", __func__, name);
+		return -1;
+	}
+	if (gpt_set_header(hdr, fd, instance) != 0) {
+		fprintf(stderr, "%s: Failed to update %s GPT header\n", __func__, name);
+		return -1;
+	}
+	return 0;
+}
+
 int gpt_disk_commit(struct gpt_disk *disk)
 {
-	int fd = -1;
+	int fd = -1, rc;
 
 	if (!disk || (disk->is_initialized != GPT_DISK_INIT_MAGIC)) {
 		fprintf(stderr, "%s: Invalid args\n", __func__);
+		goto error;
+	}
+
+	if (!disk->primary_valid || !disk->backup_valid) {
+		fprintf(stderr, "%s: Invalid GPT on %s, not writing it\n", __func__, disk->devpath);
 		goto error;
 	}
 
@@ -759,33 +933,17 @@ int gpt_disk_commit(struct gpt_disk *disk)
 		goto error;
 	}
 
-	LOGD("%s: Writing back primary GPT header\n", __func__);
-
-	// Write the primary header
-	if (gpt_set_header(disk->hdr, fd, PRIMARY_GPT) != 0) {
-		fprintf(stderr, "%s: Failed to update primary GPT header\n", __func__);
+	// Write the GPT that is invalid on the disk first, the backup when both
+	// are valid, and each partition array before its header, so that one
+	// GPT is valid at every point
+	if (disk->primary_first)
+		rc = gpt_disk_write(disk, fd, PRIMARY_GPT) ||
+		     gpt_disk_write(disk, fd, SECONDARY_GPT);
+	else
+		rc = gpt_disk_write(disk, fd, SECONDARY_GPT) ||
+		     gpt_disk_write(disk, fd, PRIMARY_GPT);
+	if (rc)
 		goto error;
-	}
-	LOGD("%s: Writing back primary partition array\n", __func__);
-
-	// Write back the primary partition array
-	if (gpt_set_pentry_arr(disk->hdr, fd, disk->pentry_arr)) {
-		fprintf(stderr, "%s: Failed to write primary GPT partition arr\n", __func__);
-		goto error;
-	}
-
-	// Write the backup header
-	if (gpt_set_header(disk->hdr_bak, fd, SECONDARY_GPT) != 0) {
-		fprintf(stderr, "%s: Failed to update backup GPT header\n", __func__);
-		goto error;
-	}
-	LOGD("%s: Writing back backup partition array\n", __func__);
-
-	// Write back the backup partition array
-	if (gpt_set_pentry_arr(disk->hdr_bak, fd, disk->pentry_arr_bak)) {
-		fprintf(stderr, "%s: Failed to write backup GPT partition arr\n", __func__);
-		goto error;
-	}
 
 	LOGD("%s: Done\n", __func__);
 

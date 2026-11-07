@@ -169,6 +169,42 @@ static int get_partition_attribute(struct gpt_disk *disk, const char *partname,
 	return retval;
 }
 
+static bool is_required_ptn(const char *ptn)
+{
+	return !strcmp(ptn, "boot_a") || !strcmp(ptn, "dtbo_a");
+}
+
+// The slot updates write several disks one after the other. Check the disks
+// and the required partitions first, so that an update cannot stop halfway.
+static int check_slot_disks(void)
+{
+	char path[GPT_PTN_PATH_MAX];
+	char missing[GPT_PTN_PATH_MAX] = "";
+	struct stat st;
+	bool checked = false;
+	unsigned i;
+
+	for (i = 0; i < 2 * ARRAY_SIZE(g_all_ptns); i++) {
+		snprintf(path, sizeof(path), "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i / 2]);
+		path[strlen(path) - 1] = i % 2 ? 'b' : 'a';
+		const char *name = path + strlen(BOOT_DEV_DIR) + 1;
+
+		if (stat(path, &st)) {
+			if (!*missing && is_required_ptn(g_all_ptns[i / 2]))
+				strcpy(missing, name);
+			continue;
+		}
+		if (!checked && gpt_utils_check_storage(name))
+			return -1;
+		checked = true;
+	}
+	if (*missing) {
+		fprintf(stderr, "Couldn't find required partition %s\n", missing);
+		return -1;
+	}
+	return 0;
+}
+
 // Set a particular attribute for all the partitions in a
 // slot
 static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
@@ -183,6 +219,9 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 	uint8_t *attr = NULL;
 	uint8_t *attr_bak = NULL;
 	const char *partName;
+
+	if (check_slot_disks())
+		return -1;
 
 	for (i = 0; i < ARRAY_SIZE(g_all_ptns); i++) {
 		memset(buf, '\0', sizeof(buf));
@@ -206,7 +245,7 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 
 		LOGD("%s: partName = '%s'\n", __func__, partName);
 
-		rc = gpt_disk_get_disk_info(partName, disk);
+		rc = gpt_disk_load_for_write(partName, disk);
 		if (rc != 0) {
 			fprintf(stderr, "%s: Failed to get disk info for %s\n", __func__, partName);
 			return -1;
@@ -467,6 +506,9 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 
 	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
 
+	if (check_slot_disks())
+		return -1;
+
 	for (i = 0, slotA = g_all_ptns[0]; i < ARRAY_SIZE(g_all_ptns); slotA = g_all_ptns[++i]) {
 		// Chop off the slot suffix from the partition name to
 		// make the string easier to work with.
@@ -485,7 +527,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		snprintf(buf + rc, GPT_PTN_PATH_MAX - rc, "/%s", slotA);
 		LOGD("Checking for partition %s\n", buf);
 		if (stat(buf, &st)) {
-			if (!strcmp(slotA, "boot_a") || !strcmp(slotA, "dtbo_a")) {
+			if (is_required_ptn(slotA)) {
 				fprintf(stderr, "Couldn't find required partition %s\n", slotA);
 				return -1;
 			}
@@ -502,14 +544,14 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		// Get the disk containing this partition. This only
 		// actually re-initialises disk if this partition refers
 		// to a different block device than the last one.
-		if (gpt_disk_get_disk_info(slotA, disk) < 0)
+		if (gpt_disk_load_for_write(slotA, disk) < 0)
 			return -1;
 
 		struct gpt_disk disk_b = { 0 };
 		struct gpt_disk *bdisk = disk;
 		if (!partition_is_for_disk(disk, slotB, devpath, sizeof(devpath))) {
 			bdisk = &disk_b;
-			if (gpt_disk_get_disk_info(slotB, bdisk) < 0)
+			if (gpt_disk_load_for_write(slotB, bdisk) < 0)
 				return -1;
 		}
 

@@ -130,6 +130,13 @@ struct gpt_disk {
 	// Block size of disk
 	uint32_t block_size;
 	uint32_t is_initialized;
+	// Whether each GPT passed the UEFI checks when it was read, or was rebuilt
+	// from the other one by gpt_disk_load_for_write()
+	bool primary_valid;
+	bool backup_valid;
+	// The primary GPT was invalid on the disk and is rebuilt, so it is
+	// written first
+	bool primary_first;
 };
 
 // GPT disk methods
@@ -139,6 +146,9 @@ void gpt_disk_free(struct gpt_disk *disk);
 // Get the details of the disk holding the partition whose name
 // is passed in via dev
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);
+// Like gpt_disk_get_disk_info(), for a disk that is going to be changed:
+// rebuild an invalid GPT from the valid one, fail if neither is valid
+int gpt_disk_load_for_write(const char *dev, struct gpt_disk *disk);
 
 int partition_is_for_disk(const struct gpt_disk *disk, const char *part, char *blockdev, int blockdev_len);
 
@@ -169,6 +179,11 @@ int gpt_disk_commit(struct gpt_disk *disk);
 int gpt_utils_set_xbl_boot_partition(enum boot_chain chain);
 
 bool gpt_utils_is_partition_backed_by_emmc(const char *part);
+
+// Check every disk of the storage device that holds partition part: the disks
+// on its SCSI host for UFS, its own disk otherwise. Fail if a disk has the GPT
+// signature but no valid GPT.
+int gpt_utils_check_storage(const char *part);
 #ifdef __cplusplus
 }
 #endif

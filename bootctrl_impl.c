@@ -90,18 +90,21 @@ enum part_attr_type {
 	ATTR_BOOTABLE,
 };
 
+// buf must hold MAX_CMDLINE_SIZE bytes, as the value can be as long as the
+// command line
 void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
 {
 	int fd;
 	char pcmd[MAX_CMDLINE_SIZE];
 	char *val, *found, *ptr = buf;
 	fd = open("/proc/cmdline", O_RDONLY);
-	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE);
+	int rc = read(fd, pcmd, sizeof(pcmd) - 1);
 	if (rc < 0) {
 		fprintf(stderr, "Couldn't open /proc/cmdline: %d (%s)\n", rc, strerror(errno));
 		goto error;
 	}
 	close(fd);
+	pcmd[rc] = '\0';
 	found = strstr(pcmd, arg);
 	if (!found || !(val = strstr(found, "="))) {
 		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
@@ -110,9 +113,10 @@ void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
 
 	val++;
 	// no this doesn't handle quotes lol
-	while (*val != ' ') {
+	while (*val && *val != ' ' && *val != '\n') {
 		*ptr++ = *val++;
 	}
+	*ptr = '\0';
 
 	return;
 

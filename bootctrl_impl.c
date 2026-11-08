@@ -552,14 +552,13 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			return -1;
 		}
 
-		// Mark A as active in primary table
-		UPDATE_SLOT(pentryA, active_guid, a_state);
-		// Mark A as active in backup table
-		UPDATE_SLOT(pentryA_bak, active_guid, a_state);
-		// Mark B as inactive in primary table
-		UPDATE_SLOT(pentryB, inactive_guid, b_state);
-		// Mark B as inactive in backup table
-		UPDATE_SLOT(pentryB_bak, inactive_guid, b_state);
+		const char *guidA = slot == 0 ? active_guid : inactive_guid;
+		const char *guidB = slot == 1 ? active_guid : inactive_guid;
+
+		UPDATE_SLOT(pentryA, guidA, a_state);
+		UPDATE_SLOT(pentryA_bak, guidA, a_state);
+		UPDATE_SLOT(pentryB, guidB, b_state);
+		UPDATE_SLOT(pentryB_bak, guidB, b_state);
 	}
 
 	// write updated content to disk

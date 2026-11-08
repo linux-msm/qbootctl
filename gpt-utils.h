@@ -180,6 +180,12 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain);
 
 bool gpt_utils_is_partition_backed_by_emmc(const char *part);
 
+// Look up the disks of the partitions of g_all_ptns in both slots and of XBL,
+// once. Later lookups of these partitions use the result, not the links in
+// BOOT_DEV_DIR.
+void gpt_utils_resolve_partitions(void);
+bool gpt_utils_partition_exists(const char *part);
+
 // Check every disk of the storage device that holds partition part: the disks
 // on its SCSI host for UFS, its own disk otherwise. Fail if a disk has the GPT
 // signature but no valid GPT.

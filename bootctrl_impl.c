@@ -180,16 +180,16 @@ static int check_slot_disks(void)
 {
 	char path[GPT_PTN_PATH_MAX];
 	char missing[GPT_PTN_PATH_MAX] = "";
-	struct stat st;
 	bool checked = false;
 	unsigned i;
 
+	gpt_utils_resolve_partitions();
 	for (i = 0; i < 2 * ARRAY_SIZE(g_all_ptns); i++) {
 		snprintf(path, sizeof(path), "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i / 2]);
 		path[strlen(path) - 1] = i % 2 ? 'b' : 'a';
 		const char *name = path + strlen(BOOT_DEV_DIR) + 1;
 
-		if (stat(path, &st)) {
+		if (!gpt_utils_partition_exists(name)) {
 			if (!*missing && is_required_ptn(g_all_ptns[i / 2]))
 				strcpy(missing, name);
 			continue;
@@ -212,7 +212,6 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 {
 	unsigned int i = 0;
 	char buf[GPT_PTN_PATH_MAX];
-	struct stat st;
 	uint8_t *pentry = NULL;
 	uint8_t *pentry_bak = NULL;
 	int rc = -1;
@@ -227,13 +226,13 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 		memset(buf, '\0', sizeof(buf));
 		// Check if A/B versions of this ptn exist
 		rc = snprintf(buf, sizeof(buf) - 1, "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i]);
-		if (stat(buf, &st) < 0) {
+		if (!gpt_utils_partition_exists(g_all_ptns[i])) {
 			// partition does not have _a version
 			continue;
 		}
 
 		buf[strlen(buf) - 1] = 'b';
-		if (stat(buf, &st) < 0) {
+		if (!gpt_utils_partition_exists(buf + strlen(BOOT_DEV_DIR) + 1)) {
 			// partition does not have _b version
 			continue;
 		}
@@ -501,7 +500,6 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	// Pointer to partition entry of current 'B' partition
 	uint8_t *pentryB = NULL;
 	uint8_t *pentryB_bak = NULL;
-	struct stat st;
 	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
@@ -526,7 +524,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		rc = snprintf(buf, sizeof(buf) - 1, "%s", BOOT_DEV_DIR);
 		snprintf(buf + rc, GPT_PTN_PATH_MAX - rc, "/%s", slotA);
 		LOGD("Checking for partition %s\n", buf);
-		if (stat(buf, &st)) {
+		if (!gpt_utils_partition_exists(slotA)) {
 			if (is_required_ptn(slotA)) {
 				fprintf(stderr, "Couldn't find required partition %s\n", slotA);
 				return -1;
@@ -536,7 +534,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		}
 
 		buf[strlen(buf) - 1] = 'b';
-		if (stat(buf, &st)) {
+		if (!gpt_utils_partition_exists(slotB)) {
 			fprintf(stderr, "Partition %s does not exist\n", buf);
 			return -1;
 		}

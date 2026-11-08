@@ -54,10 +54,10 @@
 /* list the names of the backed-up partitions to be swapped */
 /* extension used for the backup partitions - tzbak, abootbak, etc. */
 #define BAK_PTN_NAME_EXT "bak"
-#define XBL_PRIMARY	 "/dev/disk/by-partlabel/xbl_a" // FIXME
-#define XBL_BACKUP	 "/dev/disk/by-partlabel/xblbak"
-#define XBL_AB_PRIMARY	 "/dev/disk/by-partlabel/xbl_a"
-#define XBL_AB_SECONDARY "/dev/disk/by-partlabel/xbl_b"
+#define XBL_PRIMARY	 "xbl_a"
+#define XBL_BACKUP	 "xblbak"
+#define XBL_AB_PRIMARY	 "xbl_a"
+#define XBL_AB_SECONDARY "xbl_b"
 /* GPT defines */
 #define MAX_LUNS 26
 // Size of the buffer that needs to be passed to the UFS ioctl
@@ -103,6 +103,16 @@ struct update_data {
 	char lun_list[MAX_LUNS][GPT_PTN_PATH_MAX];
 	uint32_t num_valid_entries;
 };
+
+static const char *const xbl_ptns[] = { XBL_AB_PRIMARY, XBL_AB_SECONDARY, XBL_BACKUP };
+
+// The disks of the partitions that the updates use, from
+// gpt_utils_resolve_partitions(). An empty disk means no such partition.
+static struct {
+	char name[MAX_GPT_NAME_SIZE + 1];
+	char disk[GPT_PTN_PATH_MAX];
+} ptn_disks[2 * ARRAY_SIZE(g_all_ptns) + ARRAY_SIZE(xbl_ptns)];
+static unsigned num_ptn_disks;
 
 void DumpHex(const void *data, size_t size)
 {
@@ -239,19 +249,17 @@ int32_t set_boot_lun(uint8_t lun_id);
 // the boot lun to either LUNA or LUNB
 int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 {
-	struct stat st;
 	uint8_t boot_lun_id = 0;
 	const char *boot_dev = NULL;
 	int ret = -1;
 
-	(void)st;
 	(void)boot_dev;
 
 	if (chain == BACKUP_BOOT) {
 		boot_lun_id = BOOT_LUN_B_ID;
-		if (!stat(XBL_BACKUP, &st))
+		if (gpt_utils_partition_exists(XBL_BACKUP))
 			boot_dev = XBL_BACKUP;
-		else if (!stat(XBL_AB_SECONDARY, &st))
+		else if (gpt_utils_partition_exists(XBL_AB_SECONDARY))
 			boot_dev = XBL_AB_SECONDARY;
 		else {
 			fprintf(stderr, "%s: Failed to locate secondary xbl\n", __func__);
@@ -259,9 +267,9 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 		}
 	} else if (chain == NORMAL_BOOT) {
 		boot_lun_id = BOOT_LUN_A_ID;
-		if (!stat(XBL_PRIMARY, &st))
+		if (gpt_utils_partition_exists(XBL_PRIMARY))
 			boot_dev = XBL_PRIMARY;
-		else if (!stat(XBL_AB_PRIMARY, &st))
+		else if (gpt_utils_partition_exists(XBL_AB_PRIMARY))
 			boot_dev = XBL_AB_PRIMARY;
 		else {
 			fprintf(stderr, "%s: Failed to locate primary xbl\n", __func__);
@@ -273,10 +281,10 @@ int gpt_utils_set_xbl_boot_partition(enum boot_chain chain)
 	}
 	// We need either both xbl and xblbak or both xbl_a and xbl_b to exist at
 	// the same time. If not the current configuration is invalid.
-	if ((stat(XBL_PRIMARY, &st) || stat(XBL_BACKUP, &st)) &&
-	    (stat(XBL_AB_PRIMARY, &st) || stat(XBL_AB_SECONDARY, &st))) {
-		fprintf(stderr, "%s:primary/secondary XBL prt not found(%s)\n", __func__,
-			strerror(errno));
+	if ((!gpt_utils_partition_exists(XBL_PRIMARY) || !gpt_utils_partition_exists(XBL_BACKUP)) &&
+	    (!gpt_utils_partition_exists(XBL_AB_PRIMARY) ||
+	     !gpt_utils_partition_exists(XBL_AB_SECONDARY))) {
+		fprintf(stderr, "%s:primary/secondary XBL prt not found\n", __func__);
 		goto error;
 	}
 	LOGD("%s: setting %s lun as boot lun\n", __func__, boot_dev);
@@ -298,6 +306,8 @@ error:
 static int get_dev_path_from_partition_name(const char *partname, char *buf, size_t buflen)
 {
 	char path[GPT_PTN_PATH_MAX] = { 0 };
+	char resolved[PATH_MAX];
+	unsigned n;
 	int i;
 
 	if (!partname || !buf || buflen < ((PATH_TRUNCATE_LOC) + 1)) {
@@ -305,12 +315,20 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf, siz
 		return -1;
 	}
 
+	for (n = 0; n < num_ptn_disks; n++) {
+		if (strcmp(ptn_disks[n].name, partname))
+			continue;
+		if (!*ptn_disks[n].disk)
+			return -1;
+		snprintf(buf, buflen, "%s", ptn_disks[n].disk);
+		return 0;
+	}
+
 	// Need to find the lun that holds partition partname
 	snprintf(path, sizeof(path), "%s/%s", BOOT_DEV_DIR, partname);
 
 
-	buf = realpath(path, buf);
-	if (!buf) {
+	if (!realpath(path, resolved) || snprintf(buf, buflen, "%s", resolved) >= (int)buflen) {
 		return -1;
 	} else {
 		for (i = strlen(buf); i > 0; i--)
@@ -324,6 +342,37 @@ static int get_dev_path_from_partition_name(const char *partname, char *buf, siz
 	}
 
 	return 0;
+}
+
+// After a write to a disk, udev probes the disk again and meanwhile removes
+// the links of its partitions, so the updates look their partitions up
+// before the first write and only once
+void gpt_utils_resolve_partitions(void)
+{
+	unsigned i, n = 2 * ARRAY_SIZE(g_all_ptns);
+
+	if (num_ptn_disks)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(ptn_disks); i++) {
+		char *name = ptn_disks[i].name;
+		char *disk = ptn_disks[i].disk;
+
+		snprintf(name, sizeof(ptn_disks[i].name), "%s",
+			 i < n ? g_all_ptns[i / 2] : xbl_ptns[i - n]);
+		if (i < n)
+			name[strlen(name) - 1] = i % 2 ? 'b' : 'a';
+		if (get_dev_path_from_partition_name(name, disk, sizeof(ptn_disks[i].disk)))
+			*disk = 0;
+	}
+	num_ptn_disks = i;
+}
+
+bool gpt_utils_partition_exists(const char *part)
+{
+	char devpath[GPT_PTN_PATH_MAX];
+
+	return !get_dev_path_from_partition_name(part, devpath, sizeof(devpath));
 }
 
 // Get the block size of the disk represented by decsriptor fd

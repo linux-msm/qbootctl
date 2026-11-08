@@ -180,7 +180,6 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 	uint8_t *attr = NULL;
 	uint8_t *attr_bak = NULL;
 	const char *partName;
-	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	for (i = 0; i < ARRAY_SIZE(g_all_ptns); i++) {
 		memset(buf, '\0', sizeof(buf));
@@ -203,15 +202,6 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 			partName = buf + strlen(BOOT_DEV_DIR) + 1;
 
 		LOGD("%s: partName = '%s'\n", __func__, partName);
-
-		// If the current partition is for a different disk (e.g. /dev/sde when the current disk is /dev/sda)
-		// Then commit the current disk
-		if (!partition_is_for_disk(disk, partName, devpath, sizeof(devpath))) {
-			if (gpt_disk_commit(disk)) {
-				fprintf(stderr, "%s: Failed to commit disk\n", __func__);
-				return -1;
-			}
-		}
 
 		rc = gpt_disk_get_disk_info(partName, disk);
 		if (rc != 0) {

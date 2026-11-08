@@ -67,7 +67,7 @@ extern "C" {
 #define AB_PARTITION_ATTR_SLOT_ACTIVE	  (0x1 << 2)
 #define AB_PARTITION_ATTR_BOOT_SUCCESSFUL (0x1 << 6)
 #define AB_PARTITION_ATTR_UNBOOTABLE	  (0x1 << 7)
-#define AB_SLOT_ACTIVE_VAL		  0xF
+#define AB_SLOT_ACTIVE_VAL		  0x3F
 #define AB_SLOT_INACTIVE_VAL		  0x0
 #define AB_SLOT_ACTIVE			  1
 #define AB_SLOT_INACTIVE		  0
@@ -80,7 +80,9 @@ extern "C" {
 #define PTN_SWAP_LIST \
 	"abl_a", "aop_a", "apdp_a", "cmnlib_a", "cmnlib64_a", "devcfg_a", "dtbo_a", \
 	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
-	"vbmeta_a", "vbmeta_system_a"
+	"vbmeta_a", "vbmeta_system_a", "aop_config_a", "cpucp_a", "featenabler_a", "mdtp_a", \
+	"mdtpsecapp_a", "shrm_a", "uefi_a", "uefisecapp_a", "multiimgoem_a", "multiimgqti_a", \
+	"xbl_config_a"
 
 static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
 	PTN_SWAP_LIST, "boot_a", "system_a",
@@ -128,6 +130,13 @@ struct gpt_disk {
 	// Block size of disk
 	uint32_t block_size;
 	uint32_t is_initialized;
+	// Whether each GPT passed the UEFI checks when it was read, or was rebuilt
+	// from the other one by gpt_disk_load_for_write()
+	bool primary_valid;
+	bool backup_valid;
+	// The primary GPT was invalid on the disk and is rebuilt, so it is
+	// written first
+	bool primary_first;
 };
 
 // GPT disk methods
@@ -137,6 +146,9 @@ void gpt_disk_free(struct gpt_disk *disk);
 // Get the details of the disk holding the partition whose name
 // is passed in via dev
 int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *disk);
+// Like gpt_disk_get_disk_info(), for a disk that is going to be changed:
+// rebuild an invalid GPT from the valid one, fail if neither is valid
+int gpt_disk_load_for_write(const char *dev, struct gpt_disk *disk);
 
 int partition_is_for_disk(const struct gpt_disk *disk, const char *part, char *blockdev, int blockdev_len);
 
@@ -167,6 +179,17 @@ int gpt_disk_commit(struct gpt_disk *disk);
 int gpt_utils_set_xbl_boot_partition(enum boot_chain chain);
 
 bool gpt_utils_is_partition_backed_by_emmc(const char *part);
+
+// Look up the disks of the partitions of g_all_ptns in both slots and of XBL,
+// once. Later lookups of these partitions use the result, not the links in
+// BOOT_DEV_DIR.
+void gpt_utils_resolve_partitions(void);
+bool gpt_utils_partition_exists(const char *part);
+
+// Check every disk of the storage device that holds partition part: the disks
+// on its SCSI host for UFS, its own disk otherwise. Fail if a disk has the GPT
+// signature but no valid GPT.
+int gpt_utils_check_storage(const char *part);
 #ifdef __cplusplus
 }
 #endif

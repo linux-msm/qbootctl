@@ -66,6 +66,7 @@
 #define BOOT_IMG_PTN_NAME "boot_"
 #define LUN_NAME_END_LOC  14
 #define BOOT_SLOT_PROP	  "slot_suffix"
+#define SYSTEMD_SLOT_PROP "SLOT_SUFFIX"
 
 #define MAX_CMDLINE_SIZE  4096
 
@@ -90,29 +91,31 @@ enum part_attr_type {
 	ATTR_BOOTABLE,
 };
 
+// buf must hold MAX_CMDLINE_SIZE bytes, as the value can be as long as the
+// command line
 void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
 {
 	int fd;
 	char pcmd[MAX_CMDLINE_SIZE];
 	char *val, *found, *ptr = buf;
 	fd = open("/proc/cmdline", O_RDONLY);
-	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE);
+	int rc = read(fd, pcmd, sizeof(pcmd) - 1);
 	if (rc < 0) {
 		fprintf(stderr, "Couldn't open /proc/cmdline: %d (%s)\n", rc, strerror(errno));
 		goto error;
 	}
 	close(fd);
+	pcmd[rc] = '\0';
 	found = strstr(pcmd, arg);
-	if (!found || !(val = strstr(found, "="))) {
-		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
+	if (!found || !(val = strstr(found, "=")))
 		goto error;
-	}
 
 	val++;
 	// no this doesn't handle quotes lol
-	while (*val != ' ') {
+	while (*val && *val != ' ' && *val != '\n') {
 		*ptr++ = *val++;
 	}
+	*ptr = '\0';
 
 	return;
 
@@ -166,6 +169,42 @@ static int get_partition_attribute(struct gpt_disk *disk, const char *partname,
 	return retval;
 }
 
+static bool is_required_ptn(const char *ptn)
+{
+	return !strcmp(ptn, "boot_a") || !strcmp(ptn, "dtbo_a");
+}
+
+// The slot updates write several disks one after the other. Check the disks
+// and the required partitions first, so that an update cannot stop halfway.
+static int check_slot_disks(void)
+{
+	char path[GPT_PTN_PATH_MAX];
+	char missing[GPT_PTN_PATH_MAX] = "";
+	bool checked = false;
+	unsigned i;
+
+	gpt_utils_resolve_partitions();
+	for (i = 0; i < 2 * ARRAY_SIZE(g_all_ptns); i++) {
+		snprintf(path, sizeof(path), "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i / 2]);
+		path[strlen(path) - 1] = i % 2 ? 'b' : 'a';
+		const char *name = path + strlen(BOOT_DEV_DIR) + 1;
+
+		if (!gpt_utils_partition_exists(name)) {
+			if (!*missing && is_required_ptn(g_all_ptns[i / 2]))
+				strcpy(missing, name);
+			continue;
+		}
+		if (!checked && gpt_utils_check_storage(name))
+			return -1;
+		checked = true;
+	}
+	if (*missing) {
+		fprintf(stderr, "Couldn't find required partition %s\n", missing);
+		return -1;
+	}
+	return 0;
+}
+
 // Set a particular attribute for all the partitions in a
 // slot
 static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
@@ -173,26 +212,27 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 {
 	unsigned int i = 0;
 	char buf[GPT_PTN_PATH_MAX];
-	struct stat st;
 	uint8_t *pentry = NULL;
 	uint8_t *pentry_bak = NULL;
 	int rc = -1;
 	uint8_t *attr = NULL;
 	uint8_t *attr_bak = NULL;
 	const char *partName;
-	char devpath[GPT_PTN_PATH_MAX] = { 0 };
+
+	if (check_slot_disks())
+		return -1;
 
 	for (i = 0; i < ARRAY_SIZE(g_all_ptns); i++) {
 		memset(buf, '\0', sizeof(buf));
 		// Check if A/B versions of this ptn exist
 		rc = snprintf(buf, sizeof(buf) - 1, "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i]);
-		if (stat(buf, &st) < 0) {
+		if (!gpt_utils_partition_exists(g_all_ptns[i])) {
 			// partition does not have _a version
 			continue;
 		}
 
 		buf[strlen(buf) - 1] = 'b';
-		if (stat(buf, &st) < 0) {
+		if (!gpt_utils_partition_exists(buf + strlen(BOOT_DEV_DIR) + 1)) {
 			// partition does not have _b version
 			continue;
 		}
@@ -204,16 +244,7 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 
 		LOGD("%s: partName = '%s'\n", __func__, partName);
 
-		// If the current partition is for a different disk (e.g. /dev/sde when the current disk is /dev/sda)
-		// Then commit the current disk
-		if (!partition_is_for_disk(disk, partName, devpath, sizeof(devpath))) {
-			if (gpt_disk_commit(disk)) {
-				fprintf(stderr, "%s: Failed to commit disk\n", __func__);
-				return -1;
-			}
-		}
-
-		rc = gpt_disk_get_disk_info(partName, disk);
+		rc = gpt_disk_load_for_write(partName, disk);
 		if (rc != 0) {
 			fprintf(stderr, "%s: Failed to get disk info for %s\n", __func__, partName);
 			return -1;
@@ -372,6 +403,8 @@ static int get_current_or_active_slot()
 	}
 
 	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "N/A");
+	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A")))
+		get_kernel_cmdline_arg(SYSTEMD_SLOT_PROP, bootSlotProp, "N/A");
 	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
 		fprintf(stderr, "%s: Unable to read boot slot property\n", __func__);
 		return get_active_boot_slot();
@@ -449,8 +482,9 @@ const char *get_suffix(unsigned slot)
 }
 
 
-// The argument here is a vector of partition names(including the slot suffix)
-// that lie on a single disk
+// The argument here is a vector of partition names(including the slot suffix).
+// On UFS the two slots of some pairs, such as xbl_config_a and xbl_config_b,
+// lie on two different boot LUNs
 static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 						   unsigned slot)
 {
@@ -466,9 +500,12 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	// Pointer to partition entry of current 'B' partition
 	uint8_t *pentryB = NULL;
 	uint8_t *pentryB_bak = NULL;
-	struct stat st;
+	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
+
+	if (check_slot_disks())
+		return -1;
 
 	for (i = 0, slotA = g_all_ptns[0]; i < ARRAY_SIZE(g_all_ptns); slotA = g_all_ptns[++i]) {
 		// Chop off the slot suffix from the partition name to
@@ -487,8 +524,8 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		rc = snprintf(buf, sizeof(buf) - 1, "%s", BOOT_DEV_DIR);
 		snprintf(buf + rc, GPT_PTN_PATH_MAX - rc, "/%s", slotA);
 		LOGD("Checking for partition %s\n", buf);
-		if (stat(buf, &st)) {
-			if (!strcmp(slotA, "boot_a") || !strcmp(slotA, "dtbo_a")) {
+		if (!gpt_utils_partition_exists(slotA)) {
+			if (is_required_ptn(slotA)) {
 				fprintf(stderr, "Couldn't find required partition %s\n", slotA);
 				return -1;
 			}
@@ -497,7 +534,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		}
 
 		buf[strlen(buf) - 1] = 'b';
-		if (stat(buf, &st)) {
+		if (!gpt_utils_partition_exists(slotB)) {
 			fprintf(stderr, "Partition %s does not exist\n", buf);
 			return -1;
 		}
@@ -505,15 +542,23 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		// Get the disk containing this partition. This only
 		// actually re-initialises disk if this partition refers
 		// to a different block device than the last one.
-		if (gpt_disk_get_disk_info(slotA, disk) < 0)
+		if (gpt_disk_load_for_write(slotA, disk) < 0)
 			return -1;
+
+		struct gpt_disk disk_b = { 0 };
+		struct gpt_disk *bdisk = disk;
+		if (!partition_is_for_disk(disk, slotB, devpath, sizeof(devpath))) {
+			bdisk = &disk_b;
+			if (gpt_disk_load_for_write(slotB, bdisk) < 0)
+				return -1;
+		}
 
 		// Get partition entry for slot A & B from the primary
 		// and backup tables.
 		pentryA = gpt_disk_get_pentry(disk, slotA, PRIMARY_GPT);
 		pentryA_bak = gpt_disk_get_pentry(disk, slotA, SECONDARY_GPT);
-		pentryB = gpt_disk_get_pentry(disk, slotB, PRIMARY_GPT);
-		pentryB_bak = gpt_disk_get_pentry(disk, slotB, SECONDARY_GPT);
+		pentryB = gpt_disk_get_pentry(bdisk, slotB, PRIMARY_GPT);
+		pentryB_bak = gpt_disk_get_pentry(bdisk, slotB, SECONDARY_GPT);
 		if (!pentryA || !pentryA_bak || !pentryB || !pentryB_bak) {
 			// None of these should be NULL since we have already
 			// checked for A & B versions earlier.
@@ -530,14 +575,21 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			// A is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-		} else if (get_partition_attribute(disk, slotB, ATTR_SLOT_ACTIVE) == 1) {
-			// B is the current active slot
+		} else if (get_partition_attribute(bdisk, slotB, ATTR_SLOT_ACTIVE) == 1 ||
+			   get_current_or_active_slot() == 1) {
+			// B is the current active slot, or neither is marked active
+			// and B, the slot we booted from, holds the active GUID
 			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 		} else {
-			fprintf(stderr, "Both A & B are inactive..Aborting");
-			return -1;
+			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
+			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 		}
+		// XBL opens xbl_config on the boot LUN it was loaded from, and the
+		// boot LUN is switched only after the GPTs: keep the active GUID on
+		// both boot LUNs so that XBL finds it if the switch is interrupted
+		if (bdisk != disk && !strcmp(slotA, "xbl_config_a"))
+			memcpy((void *)inactive_guid, (const void *)active_guid, TYPE_GUID_SIZE);
 		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
 		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;
 
@@ -548,14 +600,22 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			return -1;
 		}
 
-		// Mark A as active in primary table
-		UPDATE_SLOT(pentryA, active_guid, a_state);
-		// Mark A as active in backup table
-		UPDATE_SLOT(pentryA_bak, active_guid, a_state);
-		// Mark B as inactive in primary table
-		UPDATE_SLOT(pentryB, inactive_guid, b_state);
-		// Mark B as inactive in backup table
-		UPDATE_SLOT(pentryB_bak, inactive_guid, b_state);
+		const char *guidA = slot == 0 ? active_guid : inactive_guid;
+		const char *guidB = slot == 1 ? active_guid : inactive_guid;
+
+		UPDATE_SLOT(pentryA, guidA, a_state);
+		UPDATE_SLOT(pentryA_bak, guidA, a_state);
+		UPDATE_SLOT(pentryB, guidB, b_state);
+		UPDATE_SLOT(pentryB_bak, guidB, b_state);
+
+		if (bdisk != disk) {
+			rc = gpt_disk_commit(bdisk);
+			gpt_disk_free(bdisk);
+			if (rc) {
+				fprintf(stderr, "Failed to commit disk entry");
+				return -1;
+			}
+		}
 	}
 
 	// write updated content to disk

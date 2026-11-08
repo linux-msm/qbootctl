@@ -66,6 +66,7 @@
 #define BOOT_IMG_PTN_NAME "boot_"
 #define LUN_NAME_END_LOC  14
 #define BOOT_SLOT_PROP	  "slot_suffix"
+#define SYSTEMD_SLOT_PROP "SLOT_SUFFIX"
 
 #define MAX_CMDLINE_SIZE  4096
 
@@ -90,29 +91,31 @@ enum part_attr_type {
 	ATTR_BOOTABLE,
 };
 
+// buf must hold MAX_CMDLINE_SIZE bytes, as the value can be as long as the
+// command line
 void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
 {
 	int fd;
 	char pcmd[MAX_CMDLINE_SIZE];
 	char *val, *found, *ptr = buf;
 	fd = open("/proc/cmdline", O_RDONLY);
-	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE);
+	int rc = read(fd, pcmd, sizeof(pcmd) - 1);
 	if (rc < 0) {
 		fprintf(stderr, "Couldn't open /proc/cmdline: %d (%s)\n", rc, strerror(errno));
 		goto error;
 	}
 	close(fd);
+	pcmd[rc] = '\0';
 	found = strstr(pcmd, arg);
-	if (!found || !(val = strstr(found, "="))) {
-		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
+	if (!found || !(val = strstr(found, "=")))
 		goto error;
-	}
 
 	val++;
 	// no this doesn't handle quotes lol
-	while (*val != ' ') {
+	while (*val && *val != ' ' && *val != '\n') {
 		*ptr++ = *val++;
 	}
+	*ptr = '\0';
 
 	return;
 
@@ -372,6 +375,8 @@ static int get_current_or_active_slot()
 	}
 
 	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "N/A");
+	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A")))
+		get_kernel_cmdline_arg(SYSTEMD_SLOT_PROP, bootSlotProp, "N/A");
 	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
 		fprintf(stderr, "%s: Unable to read boot slot property\n", __func__);
 		return get_active_boot_slot();
@@ -449,8 +454,9 @@ const char *get_suffix(unsigned slot)
 }
 
 
-// The argument here is a vector of partition names(including the slot suffix)
-// that lie on a single disk
+// The argument here is a vector of partition names(including the slot suffix).
+// On UFS the two slots of some pairs, such as xbl_config_a and xbl_config_b,
+// lie on two different boot LUNs
 static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 						   unsigned slot)
 {
@@ -467,6 +473,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	uint8_t *pentryB = NULL;
 	uint8_t *pentryB_bak = NULL;
 	struct stat st;
+	char devpath[GPT_PTN_PATH_MAX] = { 0 };
 
 	LOGD("Marking slot %s as active:\n", slot_suffix_arr[slot]);
 
@@ -508,12 +515,20 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		if (gpt_disk_get_disk_info(slotA, disk) < 0)
 			return -1;
 
+		struct gpt_disk disk_b = { 0 };
+		struct gpt_disk *bdisk = disk;
+		if (!partition_is_for_disk(disk, slotB, devpath, sizeof(devpath))) {
+			bdisk = &disk_b;
+			if (gpt_disk_get_disk_info(slotB, bdisk) < 0)
+				return -1;
+		}
+
 		// Get partition entry for slot A & B from the primary
 		// and backup tables.
 		pentryA = gpt_disk_get_pentry(disk, slotA, PRIMARY_GPT);
 		pentryA_bak = gpt_disk_get_pentry(disk, slotA, SECONDARY_GPT);
-		pentryB = gpt_disk_get_pentry(disk, slotB, PRIMARY_GPT);
-		pentryB_bak = gpt_disk_get_pentry(disk, slotB, SECONDARY_GPT);
+		pentryB = gpt_disk_get_pentry(bdisk, slotB, PRIMARY_GPT);
+		pentryB_bak = gpt_disk_get_pentry(bdisk, slotB, SECONDARY_GPT);
 		if (!pentryA || !pentryA_bak || !pentryB || !pentryB_bak) {
 			// None of these should be NULL since we have already
 			// checked for A & B versions earlier.
@@ -530,14 +545,21 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			// A is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-		} else if (get_partition_attribute(disk, slotB, ATTR_SLOT_ACTIVE) == 1) {
-			// B is the current active slot
+		} else if (get_partition_attribute(bdisk, slotB, ATTR_SLOT_ACTIVE) == 1 ||
+			   get_current_or_active_slot() == 1) {
+			// B is the current active slot, or neither is marked active
+			// and B, the slot we booted from, holds the active GUID
 			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 		} else {
-			fprintf(stderr, "Both A & B are inactive..Aborting");
-			return -1;
+			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
+			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 		}
+		// XBL opens xbl_config on the boot LUN it was loaded from, and the
+		// boot LUN is switched only after the GPTs: keep the active GUID on
+		// both boot LUNs so that XBL finds it if the switch is interrupted
+		if (bdisk != disk && !strcmp(slotA, "xbl_config_a"))
+			memcpy((void *)inactive_guid, (const void *)active_guid, TYPE_GUID_SIZE);
 		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
 		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;
 
@@ -548,14 +570,22 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 			return -1;
 		}
 
-		// Mark A as active in primary table
-		UPDATE_SLOT(pentryA, active_guid, a_state);
-		// Mark A as active in backup table
-		UPDATE_SLOT(pentryA_bak, active_guid, a_state);
-		// Mark B as inactive in primary table
-		UPDATE_SLOT(pentryB, inactive_guid, b_state);
-		// Mark B as inactive in backup table
-		UPDATE_SLOT(pentryB_bak, inactive_guid, b_state);
+		const char *guidA = slot == 0 ? active_guid : inactive_guid;
+		const char *guidB = slot == 1 ? active_guid : inactive_guid;
+
+		UPDATE_SLOT(pentryA, guidA, a_state);
+		UPDATE_SLOT(pentryA_bak, guidA, a_state);
+		UPDATE_SLOT(pentryB, guidB, b_state);
+		UPDATE_SLOT(pentryB_bak, guidB, b_state);
+
+		if (bdisk != disk) {
+			rc = gpt_disk_commit(bdisk);
+			gpt_disk_free(bdisk);
+			if (rc) {
+				fprintf(stderr, "Failed to commit disk entry");
+				return -1;
+			}
+		}
 	}
 
 	// write updated content to disk

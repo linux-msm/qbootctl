@@ -67,7 +67,7 @@ extern "C" {
 #define AB_PARTITION_ATTR_SLOT_ACTIVE	  (0x1 << 2)
 #define AB_PARTITION_ATTR_BOOT_SUCCESSFUL (0x1 << 6)
 #define AB_PARTITION_ATTR_UNBOOTABLE	  (0x1 << 7)
-#define AB_SLOT_ACTIVE_VAL		  0xF
+#define AB_SLOT_ACTIVE_VAL		  0x3F
 #define AB_SLOT_INACTIVE_VAL		  0x0
 #define AB_SLOT_ACTIVE			  1
 #define AB_SLOT_INACTIVE		  0
@@ -80,7 +80,9 @@ extern "C" {
 #define PTN_SWAP_LIST \
 	"abl_a", "aop_a", "apdp_a", "cmnlib_a", "cmnlib64_a", "devcfg_a", "dtbo_a", \
 	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
-	"vbmeta_a", "vbmeta_system_a"
+	"vbmeta_a", "vbmeta_system_a", "aop_config_a", "cpucp_a", "featenabler_a", "mdtp_a", \
+	"mdtpsecapp_a", "shrm_a", "uefi_a", "uefisecapp_a", "multiimgoem_a", "multiimgqti_a", \
+	"xbl_config_a"
 
 static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
 	PTN_SWAP_LIST, "boot_a", "system_a",
